@@ -15,7 +15,7 @@ intents.message_content = True
 
 class HouseBot(commands.Bot):
     async def setup_hook(self):
-        await self.load_extension("commands.recipe")
+        await self.load_extension("commands.recipe_commands")
         await self.tree.sync()
 
 bot = HouseBot(
