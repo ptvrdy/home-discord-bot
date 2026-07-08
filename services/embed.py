@@ -3,7 +3,7 @@ from models.recipe_card import Recipe
 
 
 def create_recipe_embed(recipe: Recipe):
-    title = recipe.title or "Untitled Recipe"
+    title = recipe.title
 
     embed = discord.Embed(
         title=f"🍳 {title}",
@@ -23,7 +23,7 @@ def create_recipe_embed(recipe: Recipe):
         inline=True
     )
 
-    ingredients = recipe.ingredients or []
+    ingredients = recipe.ingredients
 
     ingredient_text = "\n".join(
         f"• {item}" for item in ingredients[:15]
@@ -45,7 +45,7 @@ def create_recipe_embed(recipe: Recipe):
     )
 
     embed.set_footer(
-        text="House Recipe Box"
+        text="Rosie's Recipe Box 🍒"
     )
     
     image = recipe.image_url

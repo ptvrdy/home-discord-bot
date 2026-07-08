@@ -1,5 +1,4 @@
 import discord
-from discord import channel
 
 from models.recipe_card import Recipe
 from services.embed import create_recipe_embed

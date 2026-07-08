@@ -1,10 +1,10 @@
+import os
+
 import discord
 from discord import app_commands
 from discord.ext import commands
-import os
 
 from services.forum import create_recipe_post
-
 from services.scraper import scrape_recipe
 
 
@@ -28,7 +28,7 @@ class Recipe(commands.Cog):
         try:
             recipe = scrape_recipe(url)
 
-            message = f"""
+            
 🍳 **{recipe.title}**
 
 ⏱ Total Time:
@@ -53,6 +53,7 @@ Source:
                 return
 
             forum_id = int(os.environ["RECIPE_FORUM_ID"])
+            # TODO add config to import settings for each channel ID so they are centralized and not hardcoded in the codebase
 
             channel = guild.get_channel(forum_id)
 
