@@ -11,9 +11,22 @@ def create_recipe_embed(recipe: Recipe):
         color=discord.Color.orange()
     )
 
+    time_parts = []
+
+    if recipe.prep_time:
+        time_parts.append(f"Prep: {recipe.prep_time}")
+
+    if recipe.cook_time:
+        time_parts.append(f"Cook: {recipe.cook_time}")
+
+    if recipe.total_time:
+        time_parts.append(f"Total: {recipe.total_time}")
+
+    time_text = "\n".join(time_parts) or "Not provided"
+    
     embed.add_field(
         name="⏱ Time",
-        value=recipe.total_time or "Not provided",
+        value=time_text,
         inline=True
     )
 
@@ -22,6 +35,7 @@ def create_recipe_embed(recipe: Recipe):
         value=recipe.yields or "Not provided",
         inline=True
     )
+
 
     ingredients = recipe.ingredients
 
