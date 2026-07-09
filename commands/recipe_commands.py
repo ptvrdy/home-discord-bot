@@ -28,24 +28,8 @@ class Recipe(commands.Cog):
         try:
             recipe = scrape_recipe(url)
 
-            
-🍳 **{recipe.title}**
-
-⏱ Total Time:
-{recipe.total_time or "Not provided"}
-
-🍽 Servings:
-{recipe.yields}
-
-## Ingredients
-
-{chr(10).join(recipe.ingredients[:10])}
-
-Source:
-{url}
-"""
-
             guild = interaction.guild
+
             if guild is None:
                 await interaction.followup.send(
                     "❌ This command can only be used in a server."
@@ -53,7 +37,7 @@ Source:
                 return
 
             forum_id = int(os.environ["RECIPE_FORUM_ID"])
-            # TODO add config to import settings for each channel ID so they are centralized and not hardcoded in the codebase
+            # TODO add config to import settings for each channel ID so they are centralized
 
             channel = guild.get_channel(forum_id)
 
@@ -76,7 +60,3 @@ Source:
             await interaction.followup.send(
                 f"❌ I couldn't import that recipe.\n\nError: {e}"
             )
-
-
-async def setup(bot):
-    await bot.add_cog(Recipe(bot))
