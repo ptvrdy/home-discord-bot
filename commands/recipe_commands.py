@@ -60,3 +60,6 @@ class Recipe(commands.Cog):
             await interaction.followup.send(
                 f"❌ I couldn't import that recipe.\n\nError: {e}"
             )
+            
+async def setup(bot):
+    await bot.add_cog(Recipe(bot))

@@ -1,5 +1,6 @@
 from recipe_scrapers import scrape_me
 from models.recipe_card import Recipe
+from services.recipe_tags import generate_recipe_tags
 
 
 def safe_scrape(method):
@@ -24,3 +25,6 @@ def scrape_recipe(url: str):
         prep_time=safe_scrape(scraper.prep_time),
         cook_time=safe_scrape(scraper.cook_time),
     )
+    recipe.tags = generate_recipe_tags(recipe)
+    
+    return recipe
