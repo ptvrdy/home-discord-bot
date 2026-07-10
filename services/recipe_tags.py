@@ -29,6 +29,8 @@ def contains_main_ingredient(
 
 def generate_recipe_tags(recipe):
     tags = []
+    
+    tags.append("needs_review")
 
     title = recipe.title.lower()
 
