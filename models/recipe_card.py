@@ -12,6 +12,7 @@ class Recipe:
     prep_time: str | None = None
     cook_time: str | None = None
     total_time: str | None = None
+    total_minutes: int | None = None
     yields: str | None = None
 
     image_url: str | None = None
