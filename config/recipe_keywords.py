@@ -18,6 +18,13 @@ RECIPE_KEYWORDS = {
             "beef",
             "steak",
             "ground beef",
+            "corned beef",
+            "brisket",
+            "roast beef",
+            "short ribs",
+            "sirloin",
+            "chuck roast",
+            "ribeye",
         ],
         "exclude": [
             "beef broth",

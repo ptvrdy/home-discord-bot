@@ -57,8 +57,12 @@ class Recipe(commands.Cog):
             )
 
         except Exception as e:
+            print(type(e))
+            print(e)
+
             await interaction.followup.send(
-                f"❌ I couldn't import that recipe.\n\nError: {e}"
+                "❌ I couldn't import that recipe. "
+                "The website may be blocking automated imports."
             )
             
 async def setup(bot):
