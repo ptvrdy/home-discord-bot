@@ -3,24 +3,48 @@ from models.recipe_card import Recipe
 
 
 def create_recipe_embed(recipe: Recipe):
-    title = recipe.title
-
     embed = discord.Embed(
-        title=f"🍳 {title}",
-        description="Imported recipe",
-        color=discord.Color.orange()
+        title=f"🍳 {recipe.title}",
+        description="✨ Added to Rosie's Recipe Box",
+        color=0xD4A373
+    )
+
+    image = recipe.image_url
+    
+    if image:
+        embed.set_thumbnail(url=image)
+        
+    title = recipe.title
+    
+    if recipe.tags:
+        embed.add_field(
+        name="🏷️ Categories",
+        value=" ".join(recipe.tags),
+        inline=False
     )
 
     time_parts = []
 
     if recipe.prep_time:
-        time_parts.append(f"Prep: {recipe.prep_time}")
+        embed.add_field(
+            name="🔪 Prep",
+            value=recipe.prep_time,
+            inline=True
+        )
 
     if recipe.cook_time:
-        time_parts.append(f"Cook: {recipe.cook_time}")
+        embed.add_field(
+            name="🔥 Cook",
+            value=recipe.cook_time,
+            inline=True
+        )
 
     if recipe.total_time:
-        time_parts.append(f"Total: {recipe.total_time}")
+        embed.add_field(
+            name="⏱ Total",
+            value=recipe.total_time,
+            inline=True
+        )
 
     time_text = "\n".join(time_parts) or "Not provided"
     
@@ -35,7 +59,6 @@ def create_recipe_embed(recipe: Recipe):
         value=recipe.yields or "Not provided",
         inline=True
     )
-
 
     ingredients = recipe.ingredients
 
@@ -57,14 +80,16 @@ def create_recipe_embed(recipe: Recipe):
         value=recipe.source_url or "Not provided",
         inline=False
     )
+    
+    embed.add_field(
+        name="🔗 Source Name",
+        value=recipe.source_name or "Not provided",
+        inline=False
+    )
+    
 
     embed.set_footer(
         text="Rosie's Recipe Box 🍒"
     )
-    
-    image = recipe.image_url
-    
-    if image:
-        embed.set_image(url=image)
 
     return embed

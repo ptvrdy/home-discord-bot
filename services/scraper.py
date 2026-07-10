@@ -1,3 +1,5 @@
+from urllib.parse import urlparse
+
 from recipe_scrapers import scrape_me
 from models.recipe_card import Recipe
 from services.recipe_tags import generate_recipe_tags
@@ -26,6 +28,7 @@ def scrape_recipe(url: str):
             image_url=safe_scrape(scraper.image),
             source_url=url,
         )
+    domain = urlparse(url).netloc
     recipe.total_minutes = parse_minutes(recipe.total_time)
     recipe.tags = generate_recipe_tags(recipe)
     

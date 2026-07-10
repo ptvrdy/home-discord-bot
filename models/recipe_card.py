@@ -17,5 +17,6 @@ class Recipe:
 
     image_url: str | None = None
     source_url: str | None = None
+    source_name: str | None = None
     
     tags: list[str] = field(default_factory=list)
