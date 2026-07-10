@@ -18,12 +18,12 @@ DISCORD_TAGS = {
     "seafood": {
         "category": "protein",
         "discord_name": "🐟 Seafood",
-        "category": "protein",
+        "description": "Contains seafood"
     },
     "tofu": {
         "category": "protein",
         "discord_name": "🧈 Tofu",
-        "category": "protein",
+        "description": "Contains tofu"
     },
     # Recipe Type Tags
     "dessert": {
@@ -66,6 +66,11 @@ DISCORD_TAGS = {
         "category": "storage",
         "discord_name": "❄️ Freezer Friendly",
         "description": "Freezer friendly"
+    },
+    "leftovers": {
+        "category": "use_case",
+        "discord_name": "🍱 Good Leftovers",
+        "description": "Makes good leftovers"
     },
     "meal_prep": {
         "category": "use_case",
