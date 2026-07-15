@@ -25,6 +25,7 @@ RECIPE_KEYWORDS = {
             "sirloin",
             "chuck roast",
             "ribeye",
+            "beef tenderloin",
         ],
         "exclude": [
             "beef broth",
@@ -85,6 +86,8 @@ RECIPE_KEYWORDS = {
             "manicotti",
             "gnocchi",
             "fagioli",
+            "egg noodles",
+            "lasagne",
         ],
         "exclude": []
     },

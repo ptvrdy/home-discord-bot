@@ -14,6 +14,17 @@ def safe_scrape(method):
         # TODO adding logger.warning(f"Failed to scrape {method.__name__}(): {e}")
 
 
+def get_source_name(url):
+    domain = urlparse(url).netloc
+
+    sources = {
+        "cooking.nytimes.com": "New York Times Cooking",
+        "www.allrecipes.com": "AllRecipes",
+        "www.seriouseats.com": "Serious Eats",
+    }
+
+    return sources.get(domain)
+
 def scrape_recipe(url: str):
     scraper = scrape_me(url)
 
@@ -27,9 +38,9 @@ def scrape_recipe(url: str):
             yields=safe_scrape(scraper.yields),
             image_url=safe_scrape(scraper.image),
             source_url=url,
+            source_name=get_source_name(url)
         )
-    domain = urlparse(url).netloc
     recipe.total_minutes = parse_minutes(recipe.total_time)
     recipe.tags = generate_recipe_tags(recipe)
-    
+
     return recipe
