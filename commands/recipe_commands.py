@@ -8,13 +8,16 @@ from discord import app_commands
 from discord.ext import commands
 
 from config.discord_tags import DISCORD_TAGS
+from models.recipe_card import Recipe as RecipeData
 from services.database import add_cooking_log, save_recipe, update_recipe_status
 from services.forum import (
     create_recipe_post,
     keep_single_human_tag,
     tags_with_human_status,
 )
+from services.recipe_tags import generate_recipe_tags
 from services.scraper import scrape_recipe
+from services.time_parser import parse_minutes
 
 
 RECIPE_STATUS_CHOICES = [
@@ -111,12 +114,152 @@ class RecipeReviewModal(discord.ui.Modal):
             )
 
 
+class ManualRecipeTimingModal(discord.ui.Modal, title="Add a Recipe · Timing & Servings"):
+    prep_time = discord.ui.TextInput(
+        label="Prep Time",
+        placeholder="e.g. 10 minutes (optional)",
+        required=False,
+        max_length=50,
+    )
+    cook_time = discord.ui.TextInput(
+        label="Cook Time",
+        placeholder="e.g. 15 minutes (optional)",
+        required=False,
+        max_length=50,
+    )
+    total_time = discord.ui.TextInput(
+        label="Total Time",
+        placeholder="e.g. 25 minutes (optional)",
+        required=False,
+        max_length=50,
+    )
+    yields = discord.ui.TextInput(
+        label="Servings",
+        placeholder="e.g. 4 servings (optional)",
+        required=False,
+        max_length=50,
+    )
+
+    def __init__(self, cog: "Recipe", partial_recipe: dict):
+        super().__init__()
+        self.cog = cog
+        self.partial_recipe = partial_recipe
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+
+        prep_time = self.prep_time.value.strip() or None
+        cook_time = self.cook_time.value.strip() or None
+        total_time = self.total_time.value.strip() or None
+
+        recipe = RecipeData(
+            **self.partial_recipe,
+            prep_time=prep_time,
+            cook_time=cook_time,
+            total_time=total_time,
+            total_minutes=parse_minutes(total_time) or parse_minutes(cook_time),
+            yields=self.yields.value.strip() or None,
+        )
+        recipe.tags = generate_recipe_tags(recipe)
+
+        await self.cog.publish_recipe(interaction, recipe)
+
+
+class ManualRecipeModal(discord.ui.Modal, title="Add a Recipe · Details"):
+    recipe_name = discord.ui.TextInput(
+        label="Recipe Name",
+        max_length=100,
+    )
+    ingredients = discord.ui.TextInput(
+        label="Ingredients (one per line)",
+        style=discord.TextStyle.paragraph,
+        max_length=2000,
+    )
+    instructions = discord.ui.TextInput(
+        label="Instructions",
+        style=discord.TextStyle.paragraph,
+        required=False,
+        max_length=2000,
+    )
+    image_url = discord.ui.TextInput(
+        label="Image URL",
+        placeholder="https://... (optional)",
+        required=False,
+        max_length=300,
+    )
+    video_url = discord.ui.TextInput(
+        label="Video URL",
+        placeholder="https://www.tiktok.com/...",
+        max_length=300,
+    )
+
+    def __init__(self, cog: "Recipe", prefill_url: str | None = None):
+        super().__init__()
+        self.cog = cog
+        if prefill_url:
+            self.video_url.default = prefill_url
+
+    async def on_submit(self, interaction: discord.Interaction):
+        url = self.video_url.value.strip()
+        if not url.startswith(("http://", "https://")):
+            await interaction.response.send_message(
+                "❌ Video URL needs to start with http:// or https://",
+                ephemeral=True,
+            )
+            return
+
+        partial_recipe = dict(
+            title=self.recipe_name.value.strip(),
+            ingredients=[
+                line.strip()
+                for line in self.ingredients.value.splitlines()
+                if line.strip()
+            ],
+            instructions=self.instructions.value.strip() or None,
+            image_url=self.image_url.value.strip() or None,
+            source_url=url,
+            source_name="TikTok" if "tiktok.com" in url.lower() else None,
+        )
+
+        await interaction.response.send_modal(
+            ManualRecipeTimingModal(self.cog, partial_recipe)
+        )
+
+
 class Recipe(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
         recipe_forum_id = os.getenv("RECIPE_FORUM_ID")
         self.recipe_forum_id = int(recipe_forum_id) if recipe_forum_id else None
+
+    async def publish_recipe(self, interaction: discord.Interaction, recipe: RecipeData):
+        """Post a recipe to the forum and save it, regardless of where it came from."""
+        guild = interaction.guild
+        if guild is None:
+            await interaction.followup.send(
+                "❌ This command can only be used in a server."
+            )
+            return
+
+        if self.recipe_forum_id is None:
+            await interaction.followup.send(
+                "❌ Recipe forum is not configured."
+            )
+            return
+
+        channel = guild.get_channel(self.recipe_forum_id)
+
+        if not isinstance(channel, discord.ForumChannel):
+            await interaction.followup.send(
+                "❌ Recipe channel is not a forum channel."
+            )
+            return
+
+        thread = await create_recipe_post(channel, recipe)
+        save_recipe(recipe, thread.id)
+
+        await interaction.followup.send("✅ Recipe added!")
 
     @commands.Cog.listener()
     async def on_thread_update(self, before: discord.Thread, after: discord.Thread):
@@ -180,40 +323,14 @@ class Recipe(commands.Cog):
         interaction: discord.Interaction,
         url: str
     ):
+        if "tiktok.com" in url.lower():
+            await interaction.response.send_modal(ManualRecipeModal(self, prefill_url=url))
+            return
+
         await interaction.response.defer()
 
         try:
             recipe = scrape_recipe(url)
-
-            guild = interaction.guild
-
-            if guild is None:
-                await interaction.followup.send(
-                    "❌ This command can only be used in a server."
-                )
-                return
-
-            forum_id = int(os.environ["RECIPE_FORUM_ID"])
-            # TODO add config to import settings for each channel ID so they are centralized
-
-            channel = guild.get_channel(forum_id)
-
-            if not isinstance(channel, discord.ForumChannel):
-                await interaction.followup.send(
-                    "❌ Recipe channel is not a forum channel."
-                )
-                return
-
-            thread = await create_recipe_post(
-                channel,
-                recipe,
-            )
-            save_recipe(recipe, thread.id)
-
-            await interaction.followup.send(
-                "✅ Recipe added!"
-            )
-
         except Exception as e:
             print(type(e))
             print(e)
@@ -222,6 +339,10 @@ class Recipe(commands.Cog):
                 "❌ I couldn't import that recipe. "
                 "The website may be blocking automated imports."
             )
-            
+            return
+
+        await self.publish_recipe(interaction, recipe)
+
+
 async def setup(bot):
     await bot.add_cog(Recipe(bot))
