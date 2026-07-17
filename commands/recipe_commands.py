@@ -1,4 +1,5 @@
 import os
+import sqlite3
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -87,15 +88,22 @@ class RecipeReviewModal(discord.ui.Modal):
                 journal_entry += f"\n**Next time:** {self.next_time.value}"
 
             journal_message = await interaction.followup.send(journal_entry, wait=True)
-            add_cooking_log(
-                self.thread.id,
-                made_at,
-                activity,
-                self.status_key,
-                self.notes.value,
-                self.next_time.value,
-                journal_message.id,
-            )
+
+            try:
+                add_cooking_log(
+                    self.thread.id,
+                    made_at,
+                    activity,
+                    self.status_key,
+                    self.notes.value,
+                    self.next_time.value,
+                    journal_message.id,
+                )
+            except sqlite3.Error as error:
+                await interaction.followup.send(
+                    f"⚠️ Posted the journal entry, but couldn't save it to the database: {error}",
+                    ephemeral=True,
+                )
         except (ValueError, discord.HTTPException) as error:
             await interaction.followup.send(
                 f"❌ I couldn't update this recipe journal: {error}",
@@ -107,11 +115,12 @@ class Recipe(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
+        recipe_forum_id = os.getenv("RECIPE_FORUM_ID")
+        self.recipe_forum_id = int(recipe_forum_id) if recipe_forum_id else None
 
     @commands.Cog.listener()
     async def on_thread_update(self, before: discord.Thread, after: discord.Thread):
-        recipe_forum_id = os.getenv("RECIPE_FORUM_ID")
-        if recipe_forum_id is None or after.parent_id != int(recipe_forum_id):
+        if self.recipe_forum_id is None or after.parent_id != self.recipe_forum_id:
             return
 
         filtered_tags = keep_single_human_tag(after.applied_tags)
@@ -145,12 +154,11 @@ class Recipe(commands.Cog):
         status: app_commands.Choice[str],
         made_recipe: bool = True,
     ):
-        recipe_forum_id = os.getenv("RECIPE_FORUM_ID")
         channel = interaction.channel
         if (
-            recipe_forum_id is None
+            self.recipe_forum_id is None
             or not isinstance(channel, discord.Thread)
-            or channel.parent_id != int(recipe_forum_id)
+            or channel.parent_id != self.recipe_forum_id
         ):
             await interaction.response.send_message(
                 "❌ Use this command inside a recipe thread.",
