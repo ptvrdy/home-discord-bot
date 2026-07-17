@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from config.discord_tags import DISCORD_TAGS
 from services.forum import (
+    diagnose_tags,
     get_matching_tags,
     keep_single_human_tag,
     tags_with_human_status,
@@ -77,6 +78,27 @@ class ForumTagTests(unittest.TestCase):
             ],
         )
 
+    def test_matches_tags_even_when_variation_selector_is_missing(self):
+        # Discord's actual forum tag may or may not carry the invisible
+        # emoji variation-selector character our config uses, e.g. "⏱️"
+        # (with U+FE0F) vs. "⏱" (without it) both meaning the same emoji.
+        stripped_name = "".join(
+            c for c in DISCORD_TAGS["quick"]["discord_name"] if c not in (chr(0xFE0E), chr(0xFE0F))
+        )
+        channel = SimpleNamespace(
+            available_tags=[
+                SimpleNamespace(name=DISCORD_TAGS["needs_review"]["discord_name"]),
+                SimpleNamespace(name=stripped_name),
+            ]
+        )
+
+        tags = get_matching_tags(channel, ["needs_review", "quick"])
+
+        self.assertEqual(
+            [tag.name for tag in tags],
+            [DISCORD_TAGS["needs_review"]["discord_name"], stripped_name],
+        )
+
     def test_replaces_a_human_status_tag_and_preserves_recipe_tags(self):
         available_tags = [
             SimpleNamespace(name=DISCORD_TAGS[tag_key]["discord_name"])
@@ -95,6 +117,34 @@ class ForumTagTests(unittest.TestCase):
                 DISCORD_TAGS["quick"]["discord_name"],
             ],
         )
+
+    def test_diagnose_tags_reports_ok_mismatched_and_missing(self):
+        stripped_quick = "".join(
+            c for c in DISCORD_TAGS["quick"]["discord_name"] if c not in (chr(0xFE0E), chr(0xFE0F))
+        )
+        available_tag_names = [
+            DISCORD_TAGS["needs_review"]["discord_name"],  # exact match
+            stripped_quick,  # matches only after normalization
+            # "long" is entirely absent
+        ]
+
+        result = diagnose_tags(available_tag_names)
+
+        self.assertIn(DISCORD_TAGS["needs_review"]["discord_name"], result["ok"])
+        self.assertIn(
+            (DISCORD_TAGS["quick"]["discord_name"], stripped_quick),
+            result["mismatched"],
+        )
+        self.assertIn(DISCORD_TAGS["long"]["discord_name"], result["missing"])
+
+    def test_diagnose_tags_reports_all_ok_when_everything_matches(self):
+        available_tag_names = [info["discord_name"] for info in DISCORD_TAGS.values()]
+
+        result = diagnose_tags(available_tag_names)
+
+        self.assertEqual(len(result["ok"]), len(DISCORD_TAGS))
+        self.assertEqual(result["mismatched"], [])
+        self.assertEqual(result["missing"], [])
 
 
 if __name__ == "__main__":

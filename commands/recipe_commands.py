@@ -24,6 +24,8 @@ from services.embed import create_recipe_embed
 from services.forum import (
     HUMAN_TAGS,
     create_recipe_post,
+    diagnose_tags,
+    get_matching_tags,
     keep_single_human_tag,
     tags_with_human_status,
 )
@@ -341,12 +343,22 @@ class FixRecipeModal(discord.ui.Modal, title="Fix Recipe Details"):
             source_name=self.current["source_name"],
         )
         recipe.tags = generate_recipe_tags(recipe)
+        # generate_recipe_tags always seeds a fresh "needs_review" - swap that
+        # placeholder for whatever status this recipe actually has so /fix can
+        # never accidentally revert a ⭐ Favorite back to 📝 Needs Review.
+        recipe.tags = [self.current["human_status"]] + [
+            tag for tag in recipe.tags if tag != "needs_review"
+        ]
 
         try:
             save_recipe(recipe, self.thread.id)
 
             if title != self.current["title"]:
                 await self.thread.edit(name=title[:100])
+
+            parent = self.thread.parent
+            if isinstance(parent, discord.ForumChannel):
+                await self.thread.edit(applied_tags=get_matching_tags(parent, recipe.tags))
 
             starter_message = await self.thread.fetch_message(self.thread.id)
             await starter_message.edit(embed=create_recipe_embed(recipe))
@@ -537,6 +549,54 @@ class Recipe(commands.Cog):
             return
 
         await interaction.response.send_modal(FixRecipeModal(self, channel, current))
+
+    @app_commands.command(
+        name="check_setup",
+        description="Verify every configured tag actually matches a tag on the recipe forum",
+    )
+    async def check_setup(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message(
+                "❌ This command can only be used in a server.",
+                ephemeral=True,
+            )
+            return
+
+        if self.recipe_forum_id is None:
+            await interaction.response.send_message(
+                "❌ Recipe forum is not configured.",
+                ephemeral=True,
+            )
+            return
+
+        channel = guild.get_channel(self.recipe_forum_id)
+        if not isinstance(channel, discord.ForumChannel):
+            await interaction.response.send_message(
+                "❌ Recipe channel is not a forum channel.",
+                ephemeral=True,
+            )
+            return
+
+        result = diagnose_tags([tag.name for tag in channel.available_tags])
+
+        lines = [f"✅ {len(result['ok'])} tag(s) match exactly."]
+
+        if result["mismatched"]:
+            lines.append(
+                f"⚠️ {len(result['mismatched'])} tag(s) match only approximately "
+                "(they still work, but the text differs slightly - worth tidying up):"
+            )
+            lines += [f"  • configured `{a}` vs. forum `{b}`" for a, b in result["mismatched"]]
+
+        if result["missing"]:
+            lines.append(
+                f"❌ {len(result['missing'])} tag(s) are missing from the forum entirely "
+                "(these will never get applied):"
+            )
+            lines += [f"  • {name}" for name in result["missing"]]
+
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
 
 async def setup(bot):

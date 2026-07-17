@@ -117,7 +117,10 @@ RECIPE_KEYWORDS = {
 
     "breakfast": {
         "category": "meal",
-        "include": ["breakfast", "brunch", "pancake", "waffle", "omelet", "omelette"],
+        "include": [
+            "breakfast", "brunch", "pancake", "waffle", "omelet", "omelette",
+            "muesli", "granola", "oatmeal", "cereal",
+        ],
         "exclude": [],
     },
 
