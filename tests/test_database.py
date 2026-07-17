@@ -5,7 +5,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from models.recipe_card import Recipe
-from services.database import add_cooking_log, initialize_database, save_recipe, update_recipe_status
+from services.database import (
+    add_cooking_log,
+    get_cooking_log_entries,
+    get_journal_message_id,
+    initialize_database,
+    save_recipe,
+    set_journal_message_id,
+    update_recipe_status,
+)
 
 
 class DatabaseTests(unittest.TestCase):
@@ -32,7 +40,8 @@ class DatabaseTests(unittest.TestCase):
                     "favorite",
                     "Used extra basil.",
                     "Add more garlic.",
-                    67890,
+                    5,
+                    "Peyton",
                     database_path,
                 )
             )
@@ -46,7 +55,7 @@ class DatabaseTests(unittest.TestCase):
                     "SELECT tag FROM recipe_tags WHERE recipe_id = ? ORDER BY tag", (recipe_id,)
                 ).fetchall()
                 log_entry = connection.execute(
-                    "SELECT activity, status, notes FROM cooking_log WHERE recipe_id = ?",
+                    "SELECT activity, status, notes, rating, author_name FROM cooking_log WHERE recipe_id = ?",
                     (recipe_id,),
                 ).fetchone()
             finally:
@@ -54,4 +63,42 @@ class DatabaseTests(unittest.TestCase):
 
             self.assertEqual(status, "favorite")
             self.assertEqual(tags, [("favorite",), ("pasta",), ("vegetarian",)])
-            self.assertEqual(log_entry, ("Made", "favorite", "Used extra basil."))
+            self.assertEqual(
+                log_entry, ("Made", "favorite", "Used extra basil.", 5, "Peyton")
+            )
+
+    def test_cooking_log_entries_are_returned_oldest_first(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            recipe = Recipe(title="Chili", ingredients=["beef", "beans"], source_url="https://example.com/chili")
+
+            initialize_database(database_path)
+            save_recipe(recipe, 555, database_path)
+            add_cooking_log(
+                555, datetime(2026, 1, 1, tzinfo=timezone.utc), "Made", "made_before",
+                "First try.", None, 3, "Peyton", database_path,
+            )
+            add_cooking_log(
+                555, datetime(2026, 2, 1, tzinfo=timezone.utc), "Made", "make_again",
+                "Better second time.", "More cumin.", 5, "Husband", database_path,
+            )
+
+            entries = get_cooking_log_entries(555, database_path)
+
+            self.assertEqual(len(entries), 2)
+            self.assertEqual(entries[0]["author_name"], "Peyton")
+            self.assertEqual(entries[1]["author_name"], "Husband")
+
+    def test_journal_message_id_round_trips(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            recipe = Recipe(title="Chili", ingredients=["beef"], source_url="https://example.com/chili")
+
+            initialize_database(database_path)
+            save_recipe(recipe, 777, database_path)
+
+            self.assertIsNone(get_journal_message_id(777, database_path))
+
+            set_journal_message_id(777, 999888777, database_path)
+
+            self.assertEqual(get_journal_message_id(777, database_path), 999888777)

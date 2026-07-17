@@ -33,6 +33,13 @@ def _database_connection(database_path: Path = DATABASE_PATH):
         connection.close()
 
 
+def _ensure_column(connection: sqlite3.Connection, table: str, column: str, column_type: str) -> None:
+    """Add a column to an existing table if an earlier version of the schema lacks it."""
+    existing_columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+    if column not in existing_columns:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+
+
 def initialize_database(database_path: Path = DATABASE_PATH) -> None:
     """Create the durable recipe-box tables when they do not yet exist."""
     with _database_connection(database_path) as connection:
@@ -53,6 +60,7 @@ def initialize_database(database_path: Path = DATABASE_PATH) -> None:
                 image_url TEXT,
                 human_status TEXT NOT NULL DEFAULT 'needs_review',
                 discord_thread_id INTEGER UNIQUE,
+                journal_message_id INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -68,13 +76,17 @@ def initialize_database(database_path: Path = DATABASE_PATH) -> None:
                 made_at TEXT NOT NULL,
                 activity TEXT NOT NULL,
                 status TEXT NOT NULL,
+                rating INTEGER,
                 notes TEXT,
                 next_time TEXT,
-                discord_message_id INTEGER,
+                author_name TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             """
         )
+        _ensure_column(connection, "recipes", "journal_message_id", "INTEGER")
+        _ensure_column(connection, "cooking_log", "rating", "INTEGER")
+        _ensure_column(connection, "cooking_log", "author_name", "TEXT")
 
 
 def save_recipe(
@@ -177,7 +189,8 @@ def add_cooking_log(
     status: str,
     notes: str | None,
     next_time: str | None,
-    discord_message_id: int | None = None,
+    rating: int | None,
+    author_name: str,
     database_path: Path = DATABASE_PATH,
 ) -> bool:
     """Store one journal entry, returning false for recipes imported before SQLite."""
@@ -195,8 +208,8 @@ def add_cooking_log(
         connection.execute(
             """
             INSERT INTO cooking_log (
-                recipe_id, made_at, activity, status, notes, next_time, discord_message_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                recipe_id, made_at, activity, status, notes, next_time, rating, author_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 recipe_id,
@@ -205,7 +218,63 @@ def add_cooking_log(
                 status,
                 notes or None,
                 next_time or None,
-                discord_message_id,
+                rating,
+                author_name,
             ),
         )
         return True
+
+
+def get_cooking_log_entries(
+    discord_thread_id: int,
+    database_path: Path = DATABASE_PATH,
+) -> list[dict]:
+    """Return every journal entry for a recipe, oldest first."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        recipe_row = connection.execute(
+            "SELECT id FROM recipes WHERE discord_thread_id = ?",
+            (discord_thread_id,),
+        ).fetchone()
+        if recipe_row is None:
+            return []
+
+        rows = connection.execute(
+            """
+            SELECT made_at, activity, status, rating, notes, next_time, author_name
+            FROM cooking_log
+            WHERE recipe_id = ?
+            ORDER BY made_at ASC
+            """,
+            (recipe_row["id"],),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_journal_message_id(
+    discord_thread_id: int,
+    database_path: Path = DATABASE_PATH,
+) -> int | None:
+    """Return the Discord message ID of a recipe's persistent journal message, if any."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        row = connection.execute(
+            "SELECT journal_message_id FROM recipes WHERE discord_thread_id = ?",
+            (discord_thread_id,),
+        ).fetchone()
+        return row[0] if row else None
+
+
+def set_journal_message_id(
+    discord_thread_id: int,
+    journal_message_id: int,
+    database_path: Path = DATABASE_PATH,
+) -> None:
+    """Remember which message holds a recipe's journal so future reviews can edit it."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.execute(
+            "UPDATE recipes SET journal_message_id = ? WHERE discord_thread_id = ?",
+            (journal_message_id, discord_thread_id),
+        )

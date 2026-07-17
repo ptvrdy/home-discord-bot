@@ -9,7 +9,11 @@ def parse_minutes(time_value):
     if isinstance(time_value, int):
         return time_value
 
-    time_string = str(time_value).lower()
+    time_string = str(time_value).lower().strip()
+
+    # A bare number (as typed into the recipe modal, e.g. "20") means minutes.
+    if time_string.isdigit():
+        return int(time_string)
 
     minutes = 0
 

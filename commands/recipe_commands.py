@@ -9,12 +9,20 @@ from discord.ext import commands
 
 from config.discord_tags import DISCORD_TAGS
 from models.recipe_card import Recipe as RecipeData
-from services.database import add_cooking_log, save_recipe, update_recipe_status
+from services.database import (
+    add_cooking_log,
+    get_cooking_log_entries,
+    get_journal_message_id,
+    save_recipe,
+    set_journal_message_id,
+    update_recipe_status,
+)
 from services.forum import (
     create_recipe_post,
     keep_single_human_tag,
     tags_with_human_status,
 )
+from services.journal import build_journal_embed
 from services.recipe_tags import generate_recipe_tags
 from services.scraper import scrape_recipe
 from services.time_parser import parse_minutes
@@ -40,6 +48,11 @@ class RecipeReviewModal(discord.ui.Modal):
         self.status_key = status_key
         self.made_recipe = made_recipe
 
+        self.rating = discord.ui.TextInput(
+            label="⭐ Rating (1-5)",
+            placeholder="1-5",
+            max_length=1,
+        )
         self.notes = discord.ui.TextInput(
             label="Changes, substitutions, or feedback",
             placeholder="Example: Used chicken sausage and loved it.",
@@ -53,11 +66,23 @@ class RecipeReviewModal(discord.ui.Modal):
             required=False,
             max_length=500,
         )
+        self.add_item(self.rating)
         self.add_item(self.notes)
         self.add_item(self.next_time)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(thinking=False)
+        rating_text = self.rating.value.strip()
+        if rating_text not in {"1", "2", "3", "4", "5"}:
+            await interaction.response.send_message(
+                "❌ Rating needs to be a number from 1 to 5.",
+                ephemeral=True,
+            )
+            return
+
+        # Acknowledge privately: this modal was opened from a slash command, not
+        # from a button on an existing message, so there's nothing to "update" -
+        # the journal message itself is posted/edited directly via self.thread below.
+        await interaction.response.defer(ephemeral=True, thinking=True)
 
         try:
             parent = self.thread.parent
@@ -75,22 +100,12 @@ class RecipeReviewModal(discord.ui.Modal):
             try:
                 timezone = ZoneInfo(timezone_name)
             except ZoneInfoNotFoundError:
-                timezone = ZoneInfo("America/New_York")
+                # Windows has no built-in IANA timezone database (the `tzdata`
+                # package provides it); fall back to the system's local offset
+                # rather than retrying the same lookup that just failed.
+                timezone = datetime.now().astimezone().tzinfo
             made_at = datetime.now(timezone)
-            made_on = f"{made_at.strftime('%B')} {made_at.day}, {made_at.year}"
             activity = "Made" if self.made_recipe else "Reviewed"
-            status_name = DISCORD_TAGS[self.status_key]["discord_name"]
-            journal_entry = (
-                "### 🍒 Recipe Journal\n"
-                f"**{activity}:** {made_on}\n"
-                f"**Status:** {status_name}"
-            )
-            if self.notes.value:
-                journal_entry += f"\n**Notes:** {self.notes.value}"
-            if self.next_time.value:
-                journal_entry += f"\n**Next time:** {self.next_time.value}"
-
-            journal_message = await interaction.followup.send(journal_entry, wait=True)
 
             try:
                 add_cooking_log(
@@ -98,20 +113,42 @@ class RecipeReviewModal(discord.ui.Modal):
                     made_at,
                     activity,
                     self.status_key,
-                    self.notes.value,
-                    self.next_time.value,
-                    journal_message.id,
+                    self.notes.value or None,
+                    self.next_time.value or None,
+                    int(rating_text),
+                    interaction.user.display_name,
                 )
             except sqlite3.Error as error:
                 await interaction.followup.send(
-                    f"⚠️ Posted the journal entry, but couldn't save it to the database: {error}",
+                    f"⚠️ Recipe status was updated, but I couldn't save the journal entry: {error}",
                     ephemeral=True,
                 )
+                return
+
+            await self._sync_journal_message()
+            await interaction.followup.send("✅ Review saved!", ephemeral=True)
         except (ValueError, discord.HTTPException) as error:
             await interaction.followup.send(
                 f"❌ I couldn't update this recipe journal: {error}",
                 ephemeral=True,
             )
+
+    async def _sync_journal_message(self):
+        """Rebuild the recipe's single journal message from its full cooking-log history."""
+        entries = get_cooking_log_entries(self.thread.id)
+        embed = build_journal_embed(entries)
+
+        journal_message_id = get_journal_message_id(self.thread.id)
+        if journal_message_id:
+            try:
+                message = await self.thread.fetch_message(journal_message_id)
+                await message.edit(embed=embed)
+                return
+            except discord.NotFound:
+                pass  # the message was deleted; fall through and repost it
+
+        message = await self.thread.send(embed=embed)
+        set_journal_message_id(self.thread.id, message.id)
 
 
 class ManualRecipeTimingModal(discord.ui.Modal, title="Add a Recipe · Timing & Servings"):
@@ -221,9 +258,28 @@ class ManualRecipeModal(discord.ui.Modal, title="Add a Recipe · Details"):
             source_name="TikTok" if "tiktok.com" in url.lower() else None,
         )
 
-        await interaction.response.send_modal(
-            ManualRecipeTimingModal(self.cog, partial_recipe)
+        # Discord won't let a modal submission respond with another modal directly
+        # (only slash commands and button/component clicks can open one), so we
+        # bridge with a button click here to continue to the timing modal.
+        await interaction.response.send_message(
+            "Got it! Click below to add timing and servings.",
+            view=ContinueToTimingView(self.cog, partial_recipe),
+            ephemeral=True,
         )
+
+
+class ContinueToTimingView(discord.ui.View):
+    def __init__(self, cog: "Recipe", partial_recipe: dict):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.partial_recipe = partial_recipe
+
+    @discord.ui.button(label="Add Timing & Servings", style=discord.ButtonStyle.primary)
+    async def continue_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(
+            ManualRecipeTimingModal(self.cog, self.partial_recipe)
+        )
+        self.stop()
 
 
 class Recipe(commands.Cog):

@@ -3,3 +3,4 @@ python-dotenv
 recipe-scrapers
 httpx
 beautifulsoup4
+tzdata
