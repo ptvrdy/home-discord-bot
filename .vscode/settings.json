@@ -8,6 +8,7 @@
         "cavatappi",
         "cavatelli",
         "conchiglie",
+        "cooktime",
         "dotenv",
         "fagioli",
         "farfalle",
@@ -16,9 +17,11 @@
         "httpx",
         "nytimes",
         "pappardelle",
+        "preptime",
         "ribeye",
         "rotini",
         "seriouseats",
-        "tortelloni"
+        "tortelloni",
+        "totaltime"
     ]
 }

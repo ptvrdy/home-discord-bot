@@ -92,4 +92,45 @@ RECIPE_KEYWORDS = {
         "exclude": []
     },
 
+    "seafood": {
+        "category": "protein",
+        "include": [
+            "fish", "shrimp", "prawn", "crab", "lobster", "tuna", "salmon", "anchovy",
+        ],
+        "exclude": [],
+    },
+
+    "one_pot": {
+        "category": "method",
+        "include": [
+            "one pot", "one-pot", "one pan", "one-pan", "one skillet", "one-skillet",
+            "sheet pan", "sheet-pan",
+        ],
+        "exclude": [],
+    },
+
+    "slow_cooker": {
+        "category": "method",
+        "include": ["slow cooker", "crockpot", "crock pot"],
+        "exclude": [],
+    },
+
+    "breakfast": {
+        "category": "meal",
+        "include": ["breakfast", "brunch", "pancake", "waffle", "omelet", "omelette"],
+        "exclude": [],
+    },
+
+    "lunch": {
+        "category": "meal",
+        "include": ["lunch"],
+        "exclude": [],
+    },
+
+    "dinner": {
+        "category": "meal",
+        "include": ["dinner", "supper"],
+        "exclude": [],
+    },
+
 }

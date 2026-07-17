@@ -1,32 +1,11 @@
-from services.time_parser import parse_minutes
 from config.recipe_keywords import RECIPE_KEYWORDS
 
-def contains_main_ingredient(
-    ingredients,
-    ingredient_name
-):
-    exclusions = {
-        "chicken": [
-            "chicken broth",
-            "chicken stock",
-            "chicken bouillon",
-        ]
-    }
 
-    for item in ingredients:
-
-        if ingredient_name in item:
-
-            for excluded in exclusions.get(
-                ingredient_name,
-                []
-            ):
-                if excluded in item:
-                    return False
-
-            return True
-
-    return False
+NON_VEGETARIAN_KEYWORDS = [
+    "chicken", "beef", "pork", "bacon", "ham", "turkey", "lamb", "veal",
+    "sausage", "pepperoni", "prosciutto", "fish", "shrimp", "prawn", "crab",
+    "lobster", "tuna", "salmon", "anchovy", "gelatin", "broth", "stock", "bouillon",
+]
 
 def matches_keyword(recipe_text, tag):
     rules = RECIPE_KEYWORDS.get(tag)
@@ -34,12 +13,12 @@ def matches_keyword(recipe_text, tag):
     if not rules:
         return False
 
+    text_without_exclusions = recipe_text
     for excluded in rules["exclude"]:
-        if excluded in recipe_text:
-            return False
+        text_without_exclusions = text_without_exclusions.replace(excluded, "")
 
     for keyword in rules["include"]:
-        if keyword in recipe_text:
+        if keyword in text_without_exclusions:
             return True
 
     return False
@@ -60,19 +39,16 @@ def generate_recipe_tags(recipe):
         title
         + " "
         + " ".join(ingredients)
+        + " "
+        + (recipe.instructions or "").lower()
     )
 
-    print("TITLE:", title)
-    print("INGREDIENTS:", ingredients)
-    print("RECIPE TEXT:", recipe_text)
-
     for tag in RECIPE_KEYWORDS:
         if matches_keyword(recipe_text, tag):
             tags.append(tag)
 
-    for tag in RECIPE_KEYWORDS:
-        if matches_keyword(recipe_text, tag):
-            tags.append(tag)
+    if not any(keyword in recipe_text for keyword in NON_VEGETARIAN_KEYWORDS):
+        tags.append("vegetarian")
 
     if "soup" in recipe_text:
         tags.append("soup")

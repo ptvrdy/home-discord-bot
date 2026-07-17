@@ -1,103 +1,99 @@
 import discord
+
 from config.discord_tags import DISCORD_TAGS
 from models.recipe_card import Recipe
+from services.image_layout import should_use_thumbnail
 
 
-def create_recipe_embed(recipe: Recipe):
+RECIPE_BOX_COLOR = 0xB86F52
+INGREDIENT_FIELD_LIMIT = 1024
+
+
+def _truncate_ingredient_lines(ingredients: list[str]) -> str:
+    """Keep the ingredient field within Discord's 1,024-character limit."""
+    lines: list[str] = []
+    length = 0
+
+    for ingredient in ingredients:
+        line = f"• {ingredient}"
+        separator_length = 1 if lines else 0
+        if length + separator_length + len(line) > INGREDIENT_FIELD_LIMIT - 4:
+            lines.append("…")
+            break
+
+        lines.append(line)
+        length += separator_length + len(line)
+
+    return "\n".join(lines) or "Not provided"
+
+
+def _display_tags(tags: list[str]) -> list[str]:
+    """Map logical recipe tags to the matching Discord forum-tag labels."""
+    unique_tags = dict.fromkeys(tags)
+    return [
+        DISCORD_TAGS[tag]["discord_name"]
+        for tag in unique_tags
+        if tag in DISCORD_TAGS
+    ]
+
+
+def create_recipe_embed(recipe: Recipe) -> discord.Embed:
+    source_name = recipe.source_name or "the original recipe"
+    source_line = f"From **{source_name}**"
+    if recipe.source_url:
+        source_line += f" · [View the original recipe ↗]({recipe.source_url})"
+
     embed = discord.Embed(
-        title=f"🍳 {recipe.title}",
+        title=f"🍒 {recipe.title}",
         description=(
-            "✨ Added to Rosie's Recipe Box\n"
+            "*✨ Added to Rosie's Recipe Box*\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"{source_line}"
         ),
-        color=0xD4A373
+        color=RECIPE_BOX_COLOR,
     )
+    embed.set_author(name="Rosie's Recipe Box")
 
-    image = recipe.image_url
-    
-    if image:
-        embed.set_thumbnail(url=image)
-        
-    title = recipe.title
-    
-    if recipe.tags:
-        recipe_tags = list(dict.fromkeys(recipe.tags))
+    if recipe.image_url:
+        if should_use_thumbnail(recipe.image_url):
+            embed.set_thumbnail(url=recipe.image_url)
+        else:
+            embed.set_image(url=recipe.image_url)
 
-        display_tags = []
-
-        for tag in recipe_tags:
-            if tag in DISCORD_TAGS:
-                display_tags.append(
-                    DISCORD_TAGS[tag]["discord_name"]
-                )
-
+    tags = _display_tags(recipe.tags)
+    if tags:
         embed.add_field(
             name="🏷️ Categories",
-            value=" • ".join(display_tags),
-            inline=False
+            value="  •  ".join(tags),
+            inline=False,
         )
 
+    timing = []
     if recipe.prep_time:
-        embed.add_field(
-            name="🔪 Prep\n\n",
-            value=recipe.prep_time,
-            inline=True
-        )
-
+        timing.append(f"**Prep** {recipe.prep_time}")
     if recipe.cook_time:
-        embed.add_field(
-            name="🔥 Cook\n",
-            value=recipe.cook_time,
-            inline=True
-        )
-
+        timing.append(f"**Cook** {recipe.cook_time}")
     if recipe.total_time:
+        timing.append(f"**Total** {recipe.total_time}")
+
+    if timing:
         embed.add_field(
-            name="⏱ Total\n",
-            value=recipe.total_time,
-            inline=True
+            name="⏱️ Time",
+            value="  •  ".join(timing),
+            inline=False,
         )
 
     embed.add_field(
-        name="🍽 Servings\n",
+        name="🍽️ Servings",
         value=recipe.yields or "Not provided",
-        inline=True
-    )
-
-    ingredients = recipe.ingredients
-
-    ingredient_text = "\n".join(
-        f"• {item}" for item in ingredients[:15]
-    )
-
-    if len(ingredients) > 15:
-        ingredient_text += "\n..."
-
-    embed.add_field(
-        name="🥘 Ingredients\n",
-        value=ingredient_text or "Not provided",
-        inline=False
+        inline=True,
     )
 
     embed.add_field(
-        name="📚 Recipe Source\n",
-        value=f"[View Recipe]({recipe.source_url})",
-        inline=False
-    )
-    
-    embed.add_field(
-        name="🔗 Source Name\n\n",
-        value=recipe.source_name or "Not provided",
-        inline=False
-    )
-    
-    embed.add_field(
-        name="🖼 Image\n\n",
-        value = recipe.image_url or "Not provided",
-        inline=False
+        name="🧺 Ingredients",
+        value=_truncate_ingredient_lines(recipe.ingredients),
+        inline=False,
     )
 
-    embed.set_footer(
-        text="Rosie's Recipe Box 🍒"
-    )
-
+    embed.set_footer(text="Rosie's Recipe Box • Saved with care 🍒")
     return embed

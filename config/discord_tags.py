@@ -1,101 +1,111 @@
 DISCORD_TAGS = {
-    # Protein / Meat Source Tags
+    # Protein / dietary tags
     "beef": {
         "category": "protein",
         "discord_name": "🥩 Beef",
-        "description": "Contains beef"
+        "description": "Contains beef",
     },
     "chicken": {
         "category": "protein",
         "discord_name": "🐔 Chicken",
-        "description": "Contains chicken"
+        "description": "Contains chicken",
     },
     "pork": {
         "category": "protein",
         "discord_name": "🐷 Pork",
-        "description": "Contains pork"
+        "description": "Contains pork",
     },
     "seafood": {
         "category": "protein",
         "discord_name": "🐟 Seafood",
-        "description": "Contains seafood"
+        "description": "Contains seafood",
     },
     "tofu": {
         "category": "protein",
         "discord_name": "🧈 Tofu",
-        "description": "Contains tofu"
+        "description": "Contains tofu",
     },
-    # Recipe Type Tags
+    "vegetarian": {
+        "category": "dietary",
+        "discord_name": "🥬 Vegetarian",
+        "description": "Contains no detected meat or seafood",
+    },
+
+    # Recipe type tags
     "dessert": {
         "category": "type",
         "discord_name": "🍰 Dessert",
-        "description": "Contains dessert"
+        "description": "A dessert recipe",
     },
     "pasta": {
         "category": "type",
         "discord_name": "🍝 Pasta",
-        "description": "Contains pasta"
-    },
-    "salad": {
-        "category": "type",
-        "discord_name": "🥗 Salad",
-        "description": "Contains salad"
+        "description": "Contains pasta",
     },
     "soup": {
         "category": "type",
         "discord_name": "🥣 Soup",
-        "description": "Contains soup"
+        "description": "A soup recipe",
     },
-    # Convenience / Time Tags
+
+    # Method and time tags
+    "one_pot": {
+        "category": "method",
+        "discord_name": "🍲 One Pot",
+        "description": "Made in one pot, pan, or skillet",
+    },
+    "slow_cooker": {
+        "category": "method",
+        "discord_name": "🍲 Slow Cooker",
+        "description": "Uses a slow cooker",
+    },
     "quick": {
         "category": "time",
-        "discord_name": "⏱ Quick",
-        "description": "30 minutes or less"
+        "discord_name": "⏱️ Quick",
+        "description": "30 minutes or less",
     },
     "long": {
         "category": "time",
         "discord_name": "🐢 Long",
-        "description": "90 minutes or more"
+        "description": "90 minutes or more",
     },
-    "slow_cooker": {
-        "category": "equipment",
-        "discord_name": "🍲 Slow Cooker",
-        "description": "Uses slow cooker"
+
+    # Meal tags
+    "breakfast": {
+        "category": "meal",
+        "discord_name": "🍳 Breakfast",
+        "description": "Great for breakfast or brunch",
     },
-    "freezer_friendly": {
-        "category": "storage",
-        "discord_name": "❄️ Freezer Friendly",
-        "description": "Freezer friendly"
+    "lunch": {
+        "category": "meal",
+        "discord_name": "🥪 Lunch",
+        "description": "Great for lunch",
     },
-    "leftovers": {
-        "category": "use_case",
-        "discord_name": "🍱 Good Leftovers",
-        "description": "Makes good leftovers"
+    "dinner": {
+        "category": "meal",
+        "discord_name": "🍽️ Dinner",
+        "description": "Great for dinner",
     },
-    "meal_prep": {
-        "category": "use_case",
-        "discord_name": "📦 Meal Prep",
-        "description": "Meal prep"
-    },
-    # Human Tags
+
+    # Human status tags (mutually exclusive)
     "needs_review": {
         "category": "household",
         "discord_name": "📝 Needs Review",
-        "description": "Needs review"
+        "description": "Needs review",
     },
     "made_before": {
         "category": "household",
         "discord_name": "✅ Made Before",
-        "description": "Made before"
+        "description": "Made before",
     },
     "make_again": {
         "category": "household",
         "discord_name": "🔁 Make Again",
-        "description": "Make again"
+        "description": "Make again",
     },
     "favorite": {
         "category": "household",
         "discord_name": "⭐ Favorite",
-        "description": "Favorite"
+        "description": "An absolute favorite",
     },
 }

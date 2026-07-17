@@ -3,6 +3,8 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
+from services.database import initialize_database
+
 
 load_dotenv()
 
@@ -13,6 +15,7 @@ intents.message_content = True
 
 class HouseBot(commands.Bot):
     async def setup_hook(self):
+        initialize_database()
         await self.load_extension("commands.recipe_commands")
         await self.tree.sync()
 

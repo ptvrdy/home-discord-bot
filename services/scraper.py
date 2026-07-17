@@ -2,6 +2,7 @@ from urllib.parse import urlparse
 
 from recipe_scrapers import scrape_me
 from models.recipe_card import Recipe
+from services.nyt_fallback import fetch_nyt_times, is_nyt_cooking_url
 from services.recipe_tags import generate_recipe_tags
 from services.time_parser import parse_minutes
 
@@ -40,6 +41,15 @@ def scrape_recipe(url: str):
             source_url=url,
             source_name=get_source_name(url)
         )
+
+    if is_nyt_cooking_url(url) and not all(
+        (recipe.prep_time, recipe.cook_time, recipe.total_time)
+    ):
+        fallback_times = fetch_nyt_times(url)
+        recipe.prep_time = recipe.prep_time or fallback_times["prep_time"]
+        recipe.cook_time = recipe.cook_time or fallback_times["cook_time"]
+        recipe.total_time = recipe.total_time or fallback_times["total_time"]
+
     recipe.total_minutes = parse_minutes(recipe.total_time)
     recipe.tags = generate_recipe_tags(recipe)
 
