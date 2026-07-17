@@ -5,9 +5,9 @@ from datetime import datetime
 import discord
 
 from config.discord_tags import DISCORD_TAGS
+from services.embed import RECIPE_BOX_COLOR
 
 
-JOURNAL_COLOR = 0xB86F52
 JOURNAL_DESCRIPTION_LIMIT = 4096
 
 
@@ -46,8 +46,10 @@ def _build_description(entries: list[dict]) -> str:
 
 
 def build_journal_embed(entries: list[dict]) -> discord.Embed:
-    return discord.Embed(
+    embed = discord.Embed(
         title="🍒 Recipe Journal",
         description=_build_description(entries) if entries else "No entries yet.",
-        color=JOURNAL_COLOR,
+        color=RECIPE_BOX_COLOR,
     )
+    embed.set_footer(text="❦ · ❦ · ❦")
+    return embed

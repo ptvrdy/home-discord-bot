@@ -9,6 +9,9 @@ from services.database import (
     add_cooking_log,
     get_cooking_log_entries,
     get_journal_message_id,
+    get_random_recipe,
+    get_recipe_by_thread,
+    get_recipe_by_url,
     initialize_database,
     save_recipe,
     set_journal_message_id,
@@ -102,3 +105,73 @@ class DatabaseTests(unittest.TestCase):
             set_journal_message_id(777, 999888777, database_path)
 
             self.assertEqual(get_journal_message_id(777, database_path), 999888777)
+
+    def test_get_recipe_by_thread_returns_full_fields(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            recipe = Recipe(
+                title="Chili",
+                ingredients=["beef", "beans"],
+                instructions="Simmer for an hour.",
+                prep_time="10 minutes",
+                cook_time="50 minutes",
+                total_time="60 minutes",
+                total_minutes=60,
+                yields="6 servings",
+                source_url="https://example.com/chili",
+                source_name="Example Kitchen",
+                tags=["beef", "soup"],
+            )
+
+            initialize_database(database_path)
+            save_recipe(recipe, 321, database_path)
+
+            self.assertIsNone(get_recipe_by_thread(999, database_path))
+
+            stored = get_recipe_by_thread(321, database_path)
+
+            self.assertEqual(stored["title"], "Chili")
+            self.assertEqual(stored["ingredients"], ["beef", "beans"])
+            self.assertEqual(stored["cook_time"], "50 minutes")
+            self.assertEqual(stored["source_name"], "Example Kitchen")
+
+    def test_get_random_recipe_filters_by_tag(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+
+            self.assertIsNone(get_random_recipe(database_path=database_path))
+
+            save_recipe(
+                Recipe(title="Chili", ingredients=["beef"], source_url="https://example.com/chili", tags=["beef"]),
+                111, database_path,
+            )
+            save_recipe(
+                Recipe(title="Salad", ingredients=["lettuce"], source_url="https://example.com/salad", tags=["vegetarian"]),
+                222, database_path,
+            )
+
+            self.assertIsNotNone(get_random_recipe(database_path=database_path))
+
+            beef_pick = get_random_recipe("beef", database_path)
+            self.assertEqual(beef_pick["title"], "Chili")
+
+            self.assertIsNone(get_random_recipe("dessert", database_path))
+
+    def test_get_recipe_by_url_finds_existing_import(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+
+            self.assertIsNone(get_recipe_by_url("https://example.com/chili", database_path))
+
+            save_recipe(
+                Recipe(title="Chili", ingredients=["beef"], source_url="https://example.com/chili"),
+                444, database_path,
+            )
+
+            found = get_recipe_by_url("https://example.com/chili", database_path)
+            self.assertEqual(found["title"], "Chili")
+            self.assertEqual(found["discord_thread_id"], 444)
+
+            self.assertIsNone(get_recipe_by_url("https://example.com/other", database_path))

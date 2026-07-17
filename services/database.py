@@ -278,3 +278,65 @@ def set_journal_message_id(
             "UPDATE recipes SET journal_message_id = ? WHERE discord_thread_id = ?",
             (journal_message_id, discord_thread_id),
         )
+
+
+def get_recipe_by_thread(
+    discord_thread_id: int,
+    database_path: Path = DATABASE_PATH,
+) -> dict | None:
+    """Return a recipe's full stored fields, keyed for rebuilding a Recipe object."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        row = connection.execute(
+            "SELECT * FROM recipes WHERE discord_thread_id = ?",
+            (discord_thread_id,),
+        ).fetchone()
+        if row is None:
+            return None
+
+        data = dict(row)
+        data["ingredients"] = json.loads(data.pop("ingredients_json"))
+        return data
+
+
+def get_random_recipe(
+    tag: str | None = None,
+    database_path: Path = DATABASE_PATH,
+) -> dict | None:
+    """Return a random recipe's title and thread ID, optionally filtered by tag."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        if tag:
+            row = connection.execute(
+                """
+                SELECT r.title, r.discord_thread_id
+                FROM recipes r
+                JOIN recipe_tags rt ON rt.recipe_id = r.id
+                WHERE rt.tag = ?
+                ORDER BY RANDOM()
+                LIMIT 1
+                """,
+                (tag,),
+            ).fetchone()
+        else:
+            row = connection.execute(
+                "SELECT title, discord_thread_id FROM recipes ORDER BY RANDOM() LIMIT 1"
+            ).fetchone()
+        return dict(row) if row else None
+
+
+def get_recipe_by_url(
+    source_url: str,
+    database_path: Path = DATABASE_PATH,
+) -> dict | None:
+    """Return a recipe's title and thread ID if this exact URL was already imported."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        row = connection.execute(
+            "SELECT title, discord_thread_id FROM recipes WHERE source_url = ?",
+            (source_url,),
+        ).fetchone()
+        return dict(row) if row else None

@@ -5,7 +5,7 @@ from models.recipe_card import Recipe
 from services.image_layout import should_use_thumbnail
 
 
-RECIPE_BOX_COLOR = 0xB86F52
+RECIPE_BOX_COLOR = 0xA8391F
 INGREDIENT_FIELD_LIMIT = 1024
 
 
@@ -27,6 +27,12 @@ def _truncate_ingredient_lines(ingredients: list[str]) -> str:
     return "\n".join(lines) or "Not provided"
 
 
+def _no_wrap(text: str) -> str:
+    """Glue a chip's words together with non-breaking spaces so Discord only
+    wraps between chips (e.g. at a bullet), never inside one like "⏱️ / Quick"."""
+    return text.replace(" ", " ")
+
+
 def _display_tags(tags: list[str]) -> list[str]:
     """Map logical recipe tags to the matching Discord forum-tag labels."""
     unique_tags = dict.fromkeys(tags)
@@ -46,8 +52,7 @@ def create_recipe_embed(recipe: Recipe) -> discord.Embed:
     embed = discord.Embed(
         title=f"🍒 {recipe.title}",
         description=(
-            "*✨ Added to Rosie's Recipe Box*\n"
-            "━━━━━━━━━━━━━━━━━━\n"
+            f"{_no_wrap('❦ · ❦ · ❦ · ❦ · ❦ · ❦ · ❦ · ❦ · ❦ · ❦ · ❦ · ❦ · ❦ · ❦ · ❦ · ❦ · ❦ · ❦ · ❦')}\n"
             f"{source_line}"
         ),
         color=RECIPE_BOX_COLOR,
@@ -64,17 +69,17 @@ def create_recipe_embed(recipe: Recipe) -> discord.Embed:
     if tags:
         embed.add_field(
             name="🏷️ Categories",
-            value="  •  ".join(tags),
+            value="\n".join(tags),
             inline=False,
         )
 
     timing = []
     if recipe.prep_time:
-        timing.append(f"**Prep** {recipe.prep_time}")
+        timing.append(_no_wrap(f"**Prep** {recipe.prep_time}"))
     if recipe.cook_time:
-        timing.append(f"**Cook** {recipe.cook_time}")
+        timing.append(_no_wrap(f"**Cook** {recipe.cook_time}"))
     if recipe.total_time:
-        timing.append(f"**Total** {recipe.total_time}")
+        timing.append(_no_wrap(f"**Total** {recipe.total_time}"))
 
     if timing:
         embed.add_field(
@@ -95,5 +100,5 @@ def create_recipe_embed(recipe: Recipe) -> discord.Embed:
         inline=False,
     )
 
-    embed.set_footer(text="Rosie's Recipe Box • Saved with care 🍒")
+    embed.set_footer(text="🍒 Filed in Rosie's Recipe Box")
     return embed

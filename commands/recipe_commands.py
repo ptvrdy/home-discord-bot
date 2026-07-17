@@ -13,11 +13,16 @@ from services.database import (
     add_cooking_log,
     get_cooking_log_entries,
     get_journal_message_id,
+    get_random_recipe,
+    get_recipe_by_thread,
+    get_recipe_by_url,
     save_recipe,
     set_journal_message_id,
     update_recipe_status,
 )
+from services.embed import create_recipe_embed
 from services.forum import (
+    HUMAN_TAGS,
     create_recipe_post,
     keep_single_human_tag,
     tags_with_human_status,
@@ -33,6 +38,12 @@ RECIPE_STATUS_CHOICES = [
     app_commands.Choice(name="✅ Made Before", value="made_before"),
     app_commands.Choice(name="🔁 Make Again", value="make_again"),
     app_commands.Choice(name="⭐ Favorite", value="favorite"),
+]
+
+RECIPE_TAG_CHOICES = [
+    app_commands.Choice(name=tag_info["discord_name"], value=tag_key)
+    for tag_key, tag_info in DISCORD_TAGS.items()
+    if tag_key not in HUMAN_TAGS
 ]
 
 
@@ -282,6 +293,72 @@ class ContinueToTimingView(discord.ui.View):
         self.stop()
 
 
+class FixRecipeModal(discord.ui.Modal, title="Fix Recipe Details"):
+    def __init__(self, cog: "Recipe", thread: discord.Thread, current: dict):
+        super().__init__()
+        self.cog = cog
+        self.thread = thread
+        self.current = current
+
+        self.recipe_name = discord.ui.TextInput(label="Recipe Name", max_length=100)
+        self.recipe_name.default = current["title"]
+
+        self.prep_time = discord.ui.TextInput(label="Prep Time", required=False, max_length=50)
+        self.prep_time.default = current.get("prep_time") or ""
+
+        self.cook_time = discord.ui.TextInput(label="Cook Time", required=False, max_length=50)
+        self.cook_time.default = current.get("cook_time") or ""
+
+        self.total_time = discord.ui.TextInput(label="Total Time", required=False, max_length=50)
+        self.total_time.default = current.get("total_time") or ""
+
+        self.yields = discord.ui.TextInput(label="Servings", required=False, max_length=50)
+        self.yields.default = current.get("yields") or ""
+
+        for item in (self.recipe_name, self.prep_time, self.cook_time, self.total_time, self.yields):
+            self.add_item(item)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        title = self.recipe_name.value.strip() or self.current["title"]
+        prep_time = self.prep_time.value.strip() or None
+        cook_time = self.cook_time.value.strip() or None
+        total_time = self.total_time.value.strip() or None
+        yields = self.yields.value.strip() or None
+
+        recipe = RecipeData(
+            title=title,
+            ingredients=self.current["ingredients"],
+            instructions=self.current["instructions"],
+            prep_time=prep_time,
+            cook_time=cook_time,
+            total_time=total_time,
+            total_minutes=parse_minutes(total_time) or parse_minutes(cook_time),
+            yields=yields,
+            image_url=self.current["image_url"],
+            source_url=self.current["source_url"],
+            source_name=self.current["source_name"],
+        )
+        recipe.tags = generate_recipe_tags(recipe)
+
+        try:
+            save_recipe(recipe, self.thread.id)
+
+            if title != self.current["title"]:
+                await self.thread.edit(name=title[:100])
+
+            starter_message = await self.thread.fetch_message(self.thread.id)
+            await starter_message.edit(embed=create_recipe_embed(recipe))
+
+            await interaction.followup.send("✅ Recipe updated!", ephemeral=True)
+        except (discord.HTTPException, sqlite3.Error) as error:
+            await interaction.followup.send(
+                f"❌ I couldn't update this recipe: {error}",
+                ephemeral=True,
+            )
+
+
 class Recipe(commands.Cog):
 
     def __init__(self, bot):
@@ -379,6 +456,15 @@ class Recipe(commands.Cog):
         interaction: discord.Interaction,
         url: str
     ):
+        existing = get_recipe_by_url(url)
+        if existing:
+            await interaction.response.send_message(
+                f"📖 That recipe's already in the box: **{existing['title']}**\n"
+                f"<#{existing['discord_thread_id']}>",
+                ephemeral=True,
+            )
+            return
+
         if "tiktok.com" in url.lower():
             await interaction.response.send_modal(ManualRecipeModal(self, prefill_url=url))
             return
@@ -398,6 +484,59 @@ class Recipe(commands.Cog):
             return
 
         await self.publish_recipe(interaction, recipe)
+
+    @app_commands.command(
+        name="random",
+        description="Get a random recipe suggestion",
+    )
+    @app_commands.describe(tag="Optional: only suggest recipes with this tag")
+    @app_commands.choices(tag=RECIPE_TAG_CHOICES)
+    async def random_recipe(
+        self,
+        interaction: discord.Interaction,
+        tag: app_commands.Choice[str] | None = None,
+    ):
+        recipe = get_random_recipe(tag.value if tag else None)
+
+        if recipe is None:
+            message = (
+                f"🎲 No recipes tagged {tag.name} yet!"
+                if tag
+                else "🎲 No recipes saved yet — import one with /recipe!"
+            )
+            await interaction.response.send_message(message, ephemeral=True)
+            return
+
+        await interaction.response.send_message(
+            f"🎲 How about **{recipe['title']}**?\n<#{recipe['discord_thread_id']}>"
+        )
+
+    @app_commands.command(
+        name="fix",
+        description="Correct this recipe's name, times, or servings (run inside its thread)",
+    )
+    async def fix(self, interaction: discord.Interaction):
+        channel = interaction.channel
+        if (
+            self.recipe_forum_id is None
+            or not isinstance(channel, discord.Thread)
+            or channel.parent_id != self.recipe_forum_id
+        ):
+            await interaction.response.send_message(
+                "❌ Use this command inside a recipe thread.",
+                ephemeral=True,
+            )
+            return
+
+        current = get_recipe_by_thread(channel.id)
+        if current is None:
+            await interaction.response.send_message(
+                "❌ This recipe isn't in the database yet.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.send_modal(FixRecipeModal(self, channel, current))
 
 
 async def setup(bot):
