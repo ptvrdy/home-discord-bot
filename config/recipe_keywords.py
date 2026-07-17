@@ -133,4 +133,32 @@ RECIPE_KEYWORDS = {
         "exclude": [],
     },
 
+    "soup": {
+        "category": "type",
+        "include": ["soup", "stew", "chowder", "bisque", "chili"],
+        "exclude": [],
+    },
+
+    "dessert": {
+        "category": "type",
+        "include": [
+            "cake", "cupcake", "cheesecake",
+            "ice cream", "gelato", "sorbet",
+            "pudding", "custard", "mousse",
+            "brownie", "brownies",
+            "cookie", "cookies",
+            "tart", "pie",
+            "candy", "fudge",
+            "cobbler", "crumble",
+            "donut", "doughnut",
+            "macaron", "meringue",
+        ],
+        "exclude": [
+            "fish cake", "crab cake", "salmon cake", "rice cake", "corn cake",
+            "shepherd's pie", "shepherds pie", "pot pie", "chicken pot pie",
+            "tamale pie", "meat pie",
+            "yorkshire pudding", "black pudding", "blood pudding",
+        ],
+    },
+
 }

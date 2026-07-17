@@ -1,3 +1,5 @@
+import re
+
 from config.recipe_keywords import RECIPE_KEYWORDS
 
 
@@ -18,7 +20,10 @@ def matches_keyword(recipe_text, tag):
         text_without_exclusions = text_without_exclusions.replace(excluded, "")
 
     for keyword in rules["include"]:
-        if keyword in text_without_exclusions:
+        # word boundaries (with an optional trailing "s"/"'s") so "pie" won't
+        # match inside "piece" and "tart" won't match inside "starter"/"tartar"
+        pattern = r"\b" + re.escape(keyword) + r"'?s?\b"
+        if re.search(pattern, text_without_exclusions):
             return True
 
     return False
@@ -49,9 +54,6 @@ def generate_recipe_tags(recipe):
 
     if not any(keyword in recipe_text for keyword in NON_VEGETARIAN_KEYWORDS):
         tags.append("vegetarian")
-
-    if "soup" in recipe_text:
-        tags.append("soup")
 
     if recipe.total_minutes:
         if recipe.total_minutes <= 30:

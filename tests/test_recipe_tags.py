@@ -48,6 +48,40 @@ class RecipeTagTests(unittest.TestCase):
 
         self.assertNotIn("vegetarian", generate_recipe_tags(recipe))
 
+    def test_desserts_are_tagged(self):
+        for title in ["Chocolate Cake", "Apple Pie", "Sourdough Starter"]:
+            with self.subTest(title=title):
+                recipe = Recipe(title=title, ingredients=[])
+                tags = generate_recipe_tags(recipe)
+                self.assertEqual(
+                    "dessert" in tags,
+                    title != "Sourdough Starter",
+                )
+
+    def test_savory_dishes_sharing_dessert_words_are_not_tagged(self):
+        savory_titles = [
+            "Crab Cakes",
+            "Shepherd's Pie",
+            "Yorkshire Pudding",
+            "Steak Tartare",
+        ]
+        for title in savory_titles:
+            with self.subTest(title=title):
+                recipe = Recipe(title=title, ingredients=["chicken breast, cut into pieces"])
+                self.assertNotIn("dessert", generate_recipe_tags(recipe))
+
+    def test_dessert_plurals_are_still_matched(self):
+        recipe = Recipe(title="Chocolate Chip Cookies", ingredients=["cupcakes", "tarts"])
+
+        self.assertIn("dessert", generate_recipe_tags(recipe))
+
+    def test_word_boundaries_prevent_substring_false_positives(self):
+        pancakes = Recipe(title="Fluffy Pancakes", ingredients=[])
+        self.assertNotIn("dessert", generate_recipe_tags(pancakes))
+
+        hamburgers = Recipe(title="Grilled Hamburgers", ingredients=["ground beef"])
+        self.assertNotIn("pork", generate_recipe_tags(hamburgers))
+
 
 if __name__ == "__main__":
     unittest.main()
