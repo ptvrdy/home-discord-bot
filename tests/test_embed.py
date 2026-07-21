@@ -125,13 +125,18 @@ class RecipeEmbedTests(unittest.TestCase):
         embed = build_help_embed()
         fields = {field.name: field.value for field in embed.fields}
 
-        for group in ("📥 Import", "🏷️ Organize & Fix", "🔍 Find", "⭐ Review & Stats", "🛒 Grocery Shopping", "⚙️ Admin"):
+        for group in (
+            "📥 Import", "🏷️ Organize & Fix", "🔍 Find", "⭐ Review & Stats",
+            "🛒 Grocery Shopping", "🧹 Household Chores", "⚙️ Admin",
+        ):
             self.assertIn(group, fields)
 
         self.assertIn("/recipe", fields["📥 Import"])
         self.assertIn("/shopping_list", fields["🛒 Grocery Shopping"])
         self.assertIn("/combine_recipes", fields["🛒 Grocery Shopping"])
+        self.assertIn("/meal_plan", fields["🛒 Grocery Shopping"])
         self.assertIn("/grocery_list", fields["🛒 Grocery Shopping"])
+        self.assertIn("/done", fields["🧹 Household Chores"])
         self.assertLessEqual(
             sum(len(name) + len(value) for name, value in fields.items()), 6000
         )

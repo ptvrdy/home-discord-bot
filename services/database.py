@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
+from config.chores import DEFAULT_CHORES
 from config.recipe_keywords import RECIPE_KEYWORDS
 from models.recipe_card import Recipe
 from services.recipe_tags import matches_keyword
@@ -84,11 +85,24 @@ def initialize_database(database_path: Path = DATABASE_PATH) -> None:
                 author_name TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS chores (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                threshold_days INTEGER NOT NULL,
+                last_done_at TEXT,
+                last_done_by TEXT,
+                nudge_sent_at TEXT
+            );
             """
         )
         _ensure_column(connection, "recipes", "journal_message_id", "INTEGER")
         _ensure_column(connection, "cooking_log", "rating", "INTEGER")
         _ensure_column(connection, "cooking_log", "author_name", "TEXT")
+        connection.executemany(
+            "INSERT OR IGNORE INTO chores (name, threshold_days) VALUES (?, ?)",
+            DEFAULT_CHORES,
+        )
 
 
 def save_recipe(
@@ -329,6 +343,47 @@ def get_random_recipe(
         return dict(row) if row else None
 
 
+def get_random_recipes(
+    count: int,
+    tag: str | None = None,
+    database_path: Path = DATABASE_PATH,
+) -> list[dict]:
+    """Return up to `count` distinct random recipes (title, thread ID, and
+    ingredients), optionally filtered by tag, for meal-plan-style suggestions."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        if tag:
+            rows = connection.execute(
+                """
+                SELECT r.title, r.discord_thread_id, r.ingredients_json
+                FROM recipes r
+                JOIN recipe_tags rt ON rt.recipe_id = r.id
+                WHERE rt.tag = ?
+                ORDER BY RANDOM()
+                LIMIT ?
+                """,
+                (tag, count),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT title, discord_thread_id, ingredients_json
+                FROM recipes
+                ORDER BY RANDOM()
+                LIMIT ?
+                """,
+                (count,),
+            ).fetchall()
+
+        results = []
+        for row in rows:
+            data = dict(row)
+            data["ingredients"] = json.loads(data.pop("ingredients_json"))
+            results.append(data)
+        return results
+
+
 def get_recipe_by_url(
     source_url: str,
     database_path: Path = DATABASE_PATH,
@@ -552,3 +607,65 @@ def get_cooking_stats(
             "most_cooked": [dict(row) for row in most_cooked],
             "by_author": [dict(row) for row in by_author],
         }
+
+
+def get_all_chores(database_path: Path = DATABASE_PATH) -> list[dict]:
+    """Return every chore, alphabetically, with its threshold and last-done history."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute("SELECT * FROM chores ORDER BY name").fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_chore_names(database_path: Path = DATABASE_PATH) -> list[str]:
+    """Return every chore name, for slash-command autocomplete."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        rows = connection.execute("SELECT name FROM chores ORDER BY name").fetchall()
+        return [row[0] for row in rows]
+
+
+def mark_chore_done(
+    name: str,
+    completed_by: str,
+    done_at: datetime,
+    database_path: Path = DATABASE_PATH,
+) -> dict | None:
+    """Record a chore as done and clear any pending nudge for it, since the
+    thing the nudge was warning about no longer applies. Matches the chore
+    name case-insensitively. Returns the updated chore, or None if no chore
+    has that name."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        cursor = connection.execute(
+            """
+            UPDATE chores
+            SET last_done_at = ?, last_done_by = ?, nudge_sent_at = NULL
+            WHERE name = ? COLLATE NOCASE
+            """,
+            (done_at.isoformat(), completed_by, name),
+        )
+        if cursor.rowcount == 0:
+            return None
+        row = connection.execute(
+            "SELECT * FROM chores WHERE name = ? COLLATE NOCASE", (name,)
+        ).fetchone()
+        return dict(row)
+
+
+def mark_nudge_sent(
+    name: str,
+    sent_at: datetime,
+    database_path: Path = DATABASE_PATH,
+) -> None:
+    """Record that a nudge was just posted for a chore, so the nudge
+    scheduler doesn't post about it again until it's done or the household
+    timer resets."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.execute(
+            "UPDATE chores SET nudge_sent_at = ? WHERE name = ? COLLATE NOCASE",
+            (sent_at.isoformat(), name),
+        )

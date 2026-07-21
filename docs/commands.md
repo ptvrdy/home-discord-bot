@@ -38,7 +38,14 @@ from `#general` or anywhere else.
 |---|---|
 | `/shopping_list` **(run in its thread)** | Add a recipe's ingredients to an OurGroceries list. Pick which list, then uncheck anything you already have (pre-unchecked if it's already on *any* list, or a common pantry staple). An Undo button appears after adding. |
 | `/combine_recipes` | Pick up to 5 recipes (autocomplete search by title) and combine their ingredients into one deduplicated shopping list, then add to whichever OurGroceries list you choose. |
+| `/meal_plan` | Suggest 1-5 random recipes (optionally filtered by tag) and combine their ingredients into one shopping list, same as `/combine_recipes` but picked for you. |
 | `/grocery_list` | View what's currently on one of your OurGroceries lists, without leaving Discord. |
+
+## 🧹 Household Chores
+
+| Command | What it does |
+|---|---|
+| `/done <chore>` | Mark a chore as completed (autocomplete search by name). Optionally attribute it to someone else instead of yourself. Chore reminders post automatically in #nudges at 9am and 5pm once a chore passes its threshold. |
 
 ## ⚙️ Admin
 

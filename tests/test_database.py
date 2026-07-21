@@ -7,16 +7,21 @@ from pathlib import Path
 from models.recipe_card import Recipe
 from services.database import (
     add_cooking_log,
+    get_all_chores,
+    get_chore_names,
     get_cooking_log_entries,
     get_cooking_stats,
     get_journal_message_id,
     get_random_recipe,
+    get_random_recipes,
     get_recipe_by_thread,
     get_recipe_by_title,
     get_recipe_by_url,
     get_recipe_tags,
     get_recipes_needing_review,
     initialize_database,
+    mark_chore_done,
+    mark_nudge_sent,
     save_recipe,
     search_recipe_titles,
     search_recipes,
@@ -164,6 +169,54 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(beef_pick["title"], "Chili")
 
             self.assertIsNone(get_random_recipe("dessert", database_path))
+
+    def test_get_random_recipes_returns_requested_count_with_ingredients(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            for i in range(5):
+                save_recipe(
+                    Recipe(title=f"Recipe {i}", ingredients=[f"ingredient {i}"], source_url=f"https://x.com/{i}"),
+                    i, database_path,
+                )
+
+            results = get_random_recipes(3, database_path=database_path)
+
+            self.assertEqual(len(results), 3)
+            for result in results:
+                self.assertIn("title", result)
+                self.assertIn("discord_thread_id", result)
+                self.assertTrue(result["ingredients"])
+
+    def test_get_random_recipes_filters_by_tag(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            save_recipe(
+                Recipe(title="Chili", ingredients=["beef"], source_url="https://x.com/1", tags=["beef"]),
+                1, database_path,
+            )
+            save_recipe(
+                Recipe(title="Salad", ingredients=["lettuce"], source_url="https://x.com/2", tags=["vegetarian"]),
+                2, database_path,
+            )
+
+            results = get_random_recipes(5, tag="beef", database_path=database_path)
+
+            self.assertEqual([r["title"] for r in results], ["Chili"])
+
+    def test_get_random_recipes_returns_fewer_than_requested_if_not_enough_exist(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            save_recipe(
+                Recipe(title="Chili", ingredients=["beef"], source_url="https://x.com/1"),
+                1, database_path,
+            )
+
+            results = get_random_recipes(5, database_path=database_path)
+
+            self.assertEqual(len(results), 1)
 
     def test_get_recipe_by_url_finds_existing_import(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -523,6 +576,68 @@ class DatabaseTests(unittest.TestCase):
 
             results = search_recipe_titles("pasta", limit=3, database_path=database_path)
             self.assertEqual(len(results), 3)
+
+
+class ChoreDatabaseTests(unittest.TestCase):
+    def test_initialize_database_seeds_default_chores(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+
+            names = get_chore_names(database_path)
+
+            self.assertIn("Mop", names)
+            self.assertIn("Wash bed sheets", names)
+            self.assertEqual(len(names), len(set(names)))
+
+    def test_seeding_never_overwrites_existing_progress(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            mark_chore_done("Mop", "Peyton", datetime(2026, 1, 1, tzinfo=timezone.utc), database_path)
+
+            # Re-running initialize_database (as happens on every bot start)
+            # must not reset a chore that's already been logged.
+            initialize_database(database_path)
+
+            chores = {c["name"]: c for c in get_all_chores(database_path)}
+            self.assertEqual(chores["Mop"]["last_done_by"], "Peyton")
+
+    def test_mark_chore_done_updates_history_and_clears_pending_nudge(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            mark_nudge_sent("Mop", datetime(2026, 1, 1, tzinfo=timezone.utc), database_path)
+
+            done_at = datetime(2026, 1, 15, tzinfo=timezone.utc)
+            updated = mark_chore_done("mop", "Husband", done_at, database_path)
+
+            self.assertEqual(updated["name"], "Mop")
+            self.assertEqual(updated["last_done_by"], "Husband")
+            self.assertEqual(updated["last_done_at"], done_at.isoformat())
+            self.assertIsNone(updated["nudge_sent_at"])
+
+    def test_mark_chore_done_returns_none_for_unknown_chore(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+
+            result = mark_chore_done(
+                "Not A Real Chore", "Peyton", datetime.now(timezone.utc), database_path
+            )
+
+            self.assertIsNone(result)
+
+    def test_mark_nudge_sent_stamps_the_chore(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            sent_at = datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc)
+
+            mark_nudge_sent("Mop", sent_at, database_path)
+
+            chores = {c["name"]: c for c in get_all_chores(database_path)}
+            self.assertEqual(chores["Mop"]["nudge_sent_at"], sent_at.isoformat())
 
     def test_get_recipe_by_title_finds_exact_case_insensitive_match(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

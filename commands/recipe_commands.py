@@ -15,6 +15,7 @@ from services.database import (
     get_cooking_stats,
     get_journal_message_id,
     get_random_recipe,
+    get_random_recipes,
     get_recipe_by_thread,
     get_recipe_by_title,
     get_recipe_by_url,
@@ -1030,6 +1031,64 @@ class Recipe(commands.Cog):
         await interaction.followup.send(
             f"🛒 Combined {len(recipes)} recipe(s) into {len(combined_ingredients)} "
             "ingredient(s). Which list should this go on?",
+            view=GroceryListView(combined_title, combined_ingredients, lists),
+            ephemeral=True,
+        )
+
+    @app_commands.command(
+        name="meal_plan",
+        description="Suggest random recipes and combine their ingredients into one shopping list",
+    )
+    @app_commands.describe(
+        count="How many recipes to suggest (1-5, default 3)",
+        tag="Optional: only suggest recipes with this tag",
+    )
+    @app_commands.choices(tag=RECIPE_TAG_CHOICES)
+    async def meal_plan(
+        self,
+        interaction: discord.Interaction,
+        count: app_commands.Range[int, 1, 5] = 3,
+        tag: app_commands.Choice[str] | None = None,
+    ):
+        recipes = get_random_recipes(count, tag.value if tag else None)
+
+        if not recipes:
+            message = (
+                f"🎲 No recipes tagged {tag.name} yet!"
+                if tag
+                else "🎲 No recipes saved yet — import one with /recipe!"
+            )
+            await interaction.response.send_message(message, ephemeral=True)
+            return
+
+        combined_ingredients = combine_recipe_ingredients(recipes)
+        combined_title = build_combined_recipe_title(recipes, limit=COMBINE_TITLE_DISPLAY_LIMIT)
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        try:
+            lists = await get_grocery_lists()
+        except Exception as error:
+            await interaction.followup.send(
+                f"❌ I couldn't connect to OurGroceries: {error}",
+                ephemeral=True,
+            )
+            return
+
+        if not lists:
+            await interaction.followup.send(
+                "❌ No OurGroceries lists found on that account.",
+                ephemeral=True,
+            )
+            return
+
+        recipe_lines = "\n".join(
+            f"• **{recipe['title']}** — <#{recipe['discord_thread_id']}>" for recipe in recipes
+        )
+        await interaction.followup.send(
+            f"🎲 This round's picks:\n{recipe_lines}\n\n"
+            f"Combined into {len(combined_ingredients)} ingredient(s). "
+            "Which list should this go on?",
             view=GroceryListView(combined_title, combined_ingredients, lists),
             ephemeral=True,
         )

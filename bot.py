@@ -17,6 +17,7 @@ class HouseBot(commands.Bot):
     async def setup_hook(self):
         initialize_database()
         await self.load_extension("commands.recipe_commands")
+        await self.load_extension("commands.chore_commands")
         await self.tree.sync()
 
 bot = HouseBot(

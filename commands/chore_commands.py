@@ -1,0 +1,102 @@
+import os
+from datetime import datetime, time
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+import discord
+from discord import app_commands
+from discord.ext import commands, tasks
+
+from services.chores import chores_needing_nudge, format_nudge_message
+from services.database import (
+    get_all_chores,
+    get_chore_names,
+    mark_chore_done,
+    mark_nudge_sent,
+)
+
+
+def _household_timezone():
+    timezone_name = os.getenv("HOUSEHOLD_TIMEZONE", "America/New_York")
+    try:
+        return ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        # Windows has no built-in IANA timezone database; fall back to the
+        # system's local offset rather than retrying the same failed lookup.
+        return datetime.now().astimezone().tzinfo
+
+
+HOUSEHOLD_TZ = _household_timezone()
+NUDGE_TIMES = [time(9, 0, tzinfo=HOUSEHOLD_TZ), time(17, 0, tzinfo=HOUSEHOLD_TZ)]
+
+
+async def chore_name_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    current_lower = current.lower()
+    matches = [name for name in get_chore_names() if current_lower in name.lower()]
+    return [app_commands.Choice(name=name, value=name) for name in matches[:25]]
+
+
+class Chores(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+        nudges_channel_id = os.getenv("NUDGES_CHANNEL_ID")
+        self.nudges_channel_id = int(nudges_channel_id) if nudges_channel_id else None
+        self.nudge_check.start()
+
+    def cog_unload(self):
+        self.nudge_check.cancel()
+
+    @tasks.loop(time=NUDGE_TIMES)
+    async def nudge_check(self):
+        if self.nudges_channel_id is None:
+            return
+
+        channel = self.bot.get_channel(self.nudges_channel_id)
+        if not isinstance(channel, discord.abc.Messageable):
+            return
+
+        now = datetime.now(HOUSEHOLD_TZ)
+        chores = get_all_chores()
+        for chore in chores_needing_nudge(chores, now):
+            await channel.send(format_nudge_message(chore, now))
+            mark_nudge_sent(chore["name"], now)
+
+    @nudge_check.before_loop
+    async def before_nudge_check(self):
+        await self.bot.wait_until_ready()
+
+    @app_commands.command(
+        name="done",
+        description="Mark a household chore as completed",
+    )
+    @app_commands.describe(
+        chore="Which chore you completed",
+        completed_by="Optional: attribute this to someone else instead of yourself",
+    )
+    @app_commands.autocomplete(chore=chore_name_autocomplete)
+    async def done(
+        self,
+        interaction: discord.Interaction,
+        chore: str,
+        completed_by: discord.Member | None = None,
+    ):
+        member = completed_by or interaction.user
+        now = datetime.now(HOUSEHOLD_TZ)
+        updated = mark_chore_done(chore, member.display_name, now)
+
+        if updated is None:
+            await interaction.response.send_message(
+                f'❌ No chore named "{chore}" — pick a suggestion from the '
+                "autocomplete list so the name matches exactly.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.send_message(
+            f"✅ **{updated['name']}** marked done by {member.display_name}."
+        )
+
+
+async def setup(bot):
+    await bot.add_cog(Chores(bot))

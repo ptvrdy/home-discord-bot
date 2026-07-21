@@ -81,6 +81,9 @@ Run `/help` in Discord any time for a categorized list of every command, or see
   deduplicated shopping trip, then pick a list and toggle ingredients exactly
   like `/shopping_list` — same pantry-staple prioritization, cross-list
   duplicate check, and Undo button.
+- **`/meal_plan [count] [tag]`** — the same combined-shopping-list flow as
+  `/combine_recipes`, but the recipes are picked for you at random (1-5,
+  optionally filtered by tag) instead of searched by name.
 - **`/grocery_list`** — pick one of your OurGroceries lists and see what's
   currently on it (and how many items are already crossed off), without
   leaving Discord.
@@ -90,6 +93,27 @@ Run `/help` in Discord any time for a categorized list of every command, or see
   the kind of bug that silently drops a tag with no error anywhere), and tags
   missing from the forum entirely.
 - **`/help`** — lists every command above, grouped by category, from within Discord.
+
+## Household chores
+
+The bot also tracks recurring household chores (SQLite, same database as everything
+else). Each chore has a nudge threshold in days and remembers who last did it and when.
+
+- **`/done <chore>`** — marks a chore completed under whichever Discord user ran
+  the command, or under someone else if you pass `completed_by`. Autocomplete
+  helps you pick the exact chore name. Doing a chore also clears any pending
+  overdue reminder for it.
+- **Automatic nudges** — a background task checks every chore at 9am and 5pm
+  (household timezone) and posts to `#nudges` (set via `NUDGES_CHANNEL_ID`) the
+  first time a chore crosses its threshold, mentioning who last did it and how
+  long ago. It won't repeat the same reminder — a chore only nudges again after
+  `/done` is run and it goes overdue again.
+- The default chore list and thresholds live in
+  [`config/chores.py`](config/chores.py); editing that file only affects new
+  installs, since existing chores already have their own history in SQLite.
+
+This is the first piece of a broader plan to fold in shared-calendar awareness and
+one-off task scheduling (`/week`, `/task`) — see Roadmap below.
 
 ## Design notes
 
@@ -133,10 +157,11 @@ OURGROCERIES_PASSWORD=your-ourgroceries-password
 ## Project layout
 
 ```
-bot.py                     Entry point: loads the cog, syncs slash commands, initializes the DB
+bot.py                     Entry point: loads the cogs, syncs slash commands, initializes the DB
 
 commands/
-    recipe_commands.py     All slash commands + modals/views
+    recipe_commands.py     Recipe box slash commands + modals/views
+    chore_commands.py      /done + the background nudge scheduler
 
 models/
     recipe_card.py         Recipe dataclass — the shape every recipe takes regardless of source
@@ -149,6 +174,7 @@ services/
     forum.py                 Forum tag selection/priority/matching, thread creation, setup diagnostics
     journal.py               Renders the cooking-log history into the journal embed
     grocery_list.py          OurGroceries integration
+    chores.py                Pure chore-overdue logic (no Discord, no SQLite)
     image_layout.py          Decides thumbnail vs. full-size image based on aspect ratio
     time_parser.py           Parses "PT1H30M" / "2 hours" / "20" into minutes
     database.py              SQLite schema, migrations, and all persistence
@@ -156,6 +182,7 @@ services/
 config/
     discord_tags.py          Maps logical tag keys to Discord forum tag names/emoji
     recipe_keywords.py       Include/exclude keyword rules per tag
+    chores.py                Default chores and their nudge thresholds
 
 tests/                       Unit tests (unittest) for the services above
 ```
@@ -173,6 +200,7 @@ tests/                       Unit tests (unittest) for the services above
    HOUSEHOLD_TIMEZONE=America/New_York   # optional, defaults to America/New_York
    OURGROCERIES_USERNAME=your-ourgroceries-email   # optional, enables /shopping_list
    OURGROCERIES_PASSWORD=your-ourgroceries-password
+   NUDGES_CHANNEL_ID=123456789012345678   # optional, enables chore nudges
    ```
    `RECIPE_FORUM_ID` is the channel ID of your Discord **forum channel** where
    recipes get posted. The bot needs forum tags matching your logical tags
@@ -180,6 +208,10 @@ tests/                       Unit tests (unittest) for the services above
    [`config/discord_tags.py`](config/discord_tags.py) for the full list) already
    created on that forum. Run `/check_setup` after creating them to confirm
    they're recognized correctly.
+
+   `NUDGES_CHANNEL_ID` is the channel ID of a plain text channel (e.g. `#nudges`)
+   where overdue-chore reminders get posted. Without it, `/done` still works —
+   the background nudge check just has nowhere to post, so it silently no-ops.
 3. Run the bot:
    ```
    python bot.py
@@ -207,4 +239,6 @@ second.
   `/find_ingredient`/`/random`, not shown as a forum tag chip)
 - `/recipe_history` or similar for recipes whose journal has grown past what fits
   in a single Discord embed
-- Eventually: fold into a broader household-hub bot (chores, shared calendar)
+- Household hub, in progress: ✅ chore tracking (`/done`, nudges) done; still to
+  come — Google Calendar reads across 3 calendars, `/task` and `/week` scheduling
+  flows, and the daily `#this-week` summary embed

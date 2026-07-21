@@ -185,8 +185,13 @@ HELP_SECTIONS = [
         [
             ("/shopping_list", "Add a recipe's ingredients to an OurGroceries list. (run in its thread)"),
             ("/combine_recipes", "Combine ingredients from up to 5 recipes into one shopping list."),
+            ("/meal_plan", "Suggest random recipes and combine their ingredients into one shopping list."),
             ("/grocery_list", "See what's currently on one of your OurGroceries lists."),
         ],
+    ),
+    (
+        "🧹 Household Chores",
+        [("/done <chore>", "Mark a chore as completed. Add someone to attribute it to them instead of yourself.")],
     ),
     (
         "⚙️ Admin",
