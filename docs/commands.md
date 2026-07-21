@@ -1,0 +1,53 @@
+# Commands
+
+Run `/help` in Discord any time for this same list. Commands marked **(run in its thread)**
+only work inside a recipe's forum thread — run them from within that specific thread, not
+from `#general` or anywhere else.
+
+## 📥 Import
+
+| Command | What it does |
+|---|---|
+| `/recipe <url>` | Imports a recipe from the web, or opens a hand-entry modal for TikTok links / anything that can't be scraped. Checks for an existing import by URL first. |
+
+## 🏷️ Organize & Fix
+
+| Command | What it does |
+|---|---|
+| `/tags` **(run in its thread)** | Manually add or remove any of this recipe's tags via a checkbox menu. |
+| `/fix` **(run in its thread)** | Correct a recipe's name, prep/cook/total time, or servings — the fields most likely to come back wrong from a bad scrape. |
+
+## 🔍 Find
+
+| Command | What it does |
+|---|---|
+| `/find_ingredient <query>` | Search recipes by title or ingredient. Each word in the query is matched independently, and tag-name words reuse the same include/exclude rules as auto-tagging. |
+| `/random [tag]` | Suggest a random recipe, optionally filtered to one tag. |
+| `/needs_review` | List every recipe still marked 📝 Needs Review, oldest first. |
+
+## ⭐ Review & Stats
+
+| Command | What it does |
+|---|---|
+| `/review` **(run in its thread)** | Log that you made or reviewed a recipe: pick a status, rate it 1–5 stars, leave notes. Appends to that recipe's single growing journal message. |
+| `/cooking_stats` | Box size, review backlog, top-rated recipes, most-cooked recipes, and per-person activity. |
+
+## 🛒 Grocery Shopping
+
+| Command | What it does |
+|---|---|
+| `/shopping_list` **(run in its thread)** | Add a recipe's ingredients to an OurGroceries list. Pick which list, then uncheck anything you already have (pre-unchecked if it's already on *any* list, or a common pantry staple). An Undo button appears after adding. |
+| `/grocery_list` | View what's currently on one of your OurGroceries lists, without leaving Discord. |
+
+## ⚙️ Admin
+
+| Command | What it does |
+|---|---|
+| `/check_setup` | Compares every configured tag against what's actually on the recipe forum channel and reports mismatches or missing tags. |
+
+---
+
+For implementation details, see the main [README](../README.md) and
+[`services/grocery_list.py`](../services/grocery_list.py) /
+[`docs/ourgroceries-api-notes.md`](ourgroceries-api-notes.md) for the OurGroceries
+integration specifically.

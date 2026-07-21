@@ -10,6 +10,9 @@ lives only in a Discord message.
 
 ## Commands
 
+Run `/help` in Discord any time for a categorized list of every command, or see
+[`docs/commands.md`](docs/commands.md) for the same reference in the repo.
+
 - **`/recipe <url>`** — imports a recipe.
   - Scrapes title, ingredients, instructions, prep/cook/total time, servings, and
     image via [`recipe-scrapers`](https://github.com/hhursev/recipe-scrapers) for
@@ -64,14 +67,24 @@ lives only in a Discord message.
 - **`/shopping_list`** (run inside a recipe's thread) — adds the recipe's
   ingredients to an OurGroceries list. Prompts you to pick which list (built
   dynamically from whatever lists exist on the account, e.g. per-store lists),
-  skips anything already on that list, and adds ingredient text exactly as
-  scraped with the recipe's name in the item's note. See
+  then shows every ingredient as a toggle button (pre-checked, tap to
+  uncheck) so you can skip anything you already have before anything's
+  added — including ones already sitting on *any* of your lists, not just
+  the one you're adding to, each labeled with which list it's already on. If
+  a recipe has more ingredients than fit in Discord's 24-button cap, common
+  pantry staples (flour, sugar, salt, etc., ranked by how universally people
+  already have them) are dropped first. After adding, an "Undo" button lets
+  you remove exactly what was just added. See
   [OurGroceries integration](#ourgroceries-integration) below.
+- **`/grocery_list`** — pick one of your OurGroceries lists and see what's
+  currently on it (and how many items are already crossed off), without
+  leaving Discord.
 - **`/check_setup`** — compares every tag in `config/discord_tags.py` against
   what's actually configured on the recipe forum channel and reports exact
   matches, near-matches (e.g. an invisible emoji variation-selector mismatch —
   the kind of bug that silently drops a tag with no error anywhere), and tags
   missing from the forum entirely.
+- **`/help`** — lists every command above, grouped by category, from within Discord.
 
 ## Design notes
 
@@ -88,15 +101,22 @@ lives only in a Discord message.
 
 ## OurGroceries integration
 
-OurGroceries has no official public API. `/shopping_list` uses the
+OurGroceries has no official public API. `/shopping_list` and `/grocery_list` use the
 community-maintained [`ourgroceries`](https://pypi.org/project/ourgroceries/)
 package, which reverse-engineers the same endpoints their mobile app uses
 (username/password login — there's no API key system to speak of). This is
 unofficial and response shapes aren't guaranteed by anyone; it was built
 against `ourgroceries==1.5.4` and cross-checked against Home Assistant's
-production integration (which uses the same library), but hasn't been
-exercised against a real account yet. If something errors, that's the first
+production integration (which uses the same library), and has since been
+verified live against a real account. If something errors, that's the first
 place to look — see [`services/grocery_list.py`](services/grocery_list.py).
+
+Two non-obvious things this project ran into while reverse-engineering the response
+shapes (crossed-off status living under a different field than the library's own
+default assumes, and item text appearing under two different keys depending on the
+response path) are written up in
+[`docs/ourgroceries-api-notes.md`](docs/ourgroceries-api-notes.md), in case it saves
+someone else the same digging.
 
 Set these in `.env` to enable it (see Setup below):
 ```
@@ -182,6 +202,6 @@ second.
   `/find_ingredient`/`/random`, not shown as a forum tag chip)
 - `/recipe_history` or similar for recipes whose journal has grown past what fits
   in a single Discord embed
-- Live-verify `/shopping_list` against a real OurGroceries account and fix
-  whatever the unofficial API's actual response shape turns out to disagree with
+- Multi-recipe combined shopping lists (add ingredients from several recipes into
+  one trip, deduplicated across recipes)
 - Eventually: fold into a broader household-hub bot (chores, shared calendar)

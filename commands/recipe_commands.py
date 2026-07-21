@@ -25,7 +25,7 @@ from services.database import (
     set_recipe_tags,
     update_recipe_status,
 )
-from services.embed import build_stats_embed, create_recipe_embed
+from services.embed import build_help_embed, build_stats_embed, create_recipe_embed
 from services.forum import (
     HUMAN_TAGS,
     create_recipe_post,
@@ -35,7 +35,14 @@ from services.forum import (
     normalize_tag_name,
     tags_with_human_status,
 )
-from services.grocery_list import add_recipe_ingredients, get_grocery_lists
+from services.grocery_list import (
+    add_recipe_ingredients,
+    find_existing_locations,
+    get_grocery_lists,
+    get_list_contents,
+    prioritize_ingredients,
+    remove_items,
+)
 from services.journal import build_journal_embed
 from services.recipe_tags import generate_recipe_tags
 from services.scraper import scrape_recipe
@@ -57,6 +64,7 @@ RECIPE_TAG_CHOICES = [
 
 SEARCH_RESULT_LIMIT = 10
 NEEDS_REVIEW_LIMIT = 25
+GROCERY_VIEW_LIMIT = 50
 
 
 def merge_recipe_tags(fresh_tags: list[str], existing_tags: list[str], human_status: str) -> list[str]:
@@ -450,32 +458,208 @@ class GroceryListSelect(discord.ui.Select):
         self.ingredients = ingredients
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True, thinking=True)
-
         list_id = self.values[0]
         list_name = next(option.label for option in self.options if option.value == list_id)
 
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
         try:
-            result = await add_recipe_ingredients(list_id, self.ingredients, self.recipe_title)
+            locations = await find_existing_locations(self.ingredients)
         except Exception as error:
             await interaction.followup.send(
-                f"❌ I couldn't update OurGroceries: {error}",
+                f"❌ I couldn't check your other lists: {error}",
                 ephemeral=True,
             )
             return
 
-        lines = [f"🛒 Added to **{list_name}**:"]
-        lines += [f"• {item}" for item in result["added"]] or ["_(nothing new - already on the list)_"]
-        if result["skipped"]:
-            lines.append(f"_Already there: {', '.join(result['skipped'])}_")
+        content = f"Tap to uncheck anything you already have, then **Add Selected** for **{list_name}**:"
+        if len(self.ingredients) > 24:
+            content += f"\n_(showing the first 24 of {len(self.ingredients)} ingredients)_"
 
-        await interaction.followup.send("\n".join(lines), ephemeral=True)
+        await interaction.followup.send(
+            content,
+            view=IngredientToggleView(list_id, list_name, self.recipe_title, self.ingredients, locations),
+            ephemeral=True,
+        )
 
 
 class GroceryListView(discord.ui.View):
     def __init__(self, recipe_title: str, ingredients: list[str], lists: list[dict]):
         super().__init__(timeout=300)
         self.add_item(GroceryListSelect(recipe_title, ingredients, lists))
+
+
+class IngredientToggleButton(discord.ui.Button):
+    def __init__(self, ingredient: str, location: str | None = None):
+        self.ingredient = ingredient
+        self.location = location
+        # Default unchecked if it's already sitting on some list - active
+        # opt-in to add a likely-duplicate rather than a silent skip.
+        self.checked = location is None
+        super().__init__(label=self._label(), style=self._style())
+
+    def _label(self) -> str:
+        base = f"{'✅' if self.checked else '⬜'} {self.ingredient}"
+        if self.location:
+            base += f" (on {self.location})"
+        return base[:80]
+
+    def _style(self) -> discord.ButtonStyle:
+        return discord.ButtonStyle.success if self.checked else discord.ButtonStyle.secondary
+
+    async def callback(self, interaction: discord.Interaction):
+        # Editing this same message in place (not sending a new one) keeps the
+        # buttons at a fixed position on screen - toggling never resizes or
+        # reflows the message, unlike a Select dropdown's collapsing list.
+        self.checked = not self.checked
+        self.style = self._style()
+        self.label = self._label()
+        await interaction.response.edit_message(view=self.view)
+
+
+class ConfirmGroceryButton(discord.ui.Button):
+    def __init__(self, list_id: str, list_name: str, recipe_title: str):
+        super().__init__(label="Add Selected", style=discord.ButtonStyle.primary)
+        self.list_id = list_id
+        self.list_name = list_name
+        self.recipe_title = recipe_title
+
+    async def callback(self, interaction: discord.Interaction):
+        selected_ingredients = [
+            child.ingredient
+            for child in self.view.children
+            if isinstance(child, IngredientToggleButton) and child.checked
+        ]
+
+        if not selected_ingredients:
+            await interaction.response.edit_message(
+                content="Nothing selected — nothing added.", view=None
+            )
+            return
+
+        # This message already exists (it's what the button is attached to),
+        # so deferring here means "I'll update this same message," which is
+        # exactly what edit_original_response below does once the slow
+        # OurGroceries call finishes.
+        await interaction.response.defer()
+
+        try:
+            result = await add_recipe_ingredients(self.list_id, selected_ingredients, self.recipe_title)
+        except Exception as error:
+            await interaction.edit_original_response(
+                content=f"❌ I couldn't update OurGroceries: {error}", view=None
+            )
+            return
+
+        lines = [f"🛒 Added to **{self.list_name}**:"]
+        lines += [f"• {item}" for item in result["added"]] or ["_(nothing new - already on the list)_"]
+        if result["skipped"]:
+            lines.append(f"_Already there: {', '.join(result['skipped'])}_")
+
+        undo_view = None
+        if result["added_item_ids"]:
+            undo_view = UndoAddView(self.list_id, self.list_name, result["added_item_ids"])
+
+        await interaction.edit_original_response(content="\n".join(lines), view=undo_view)
+
+
+class UndoAddButton(discord.ui.Button):
+    def __init__(self, list_id: str, list_name: str, item_ids: list[str]):
+        super().__init__(label="Undo", style=discord.ButtonStyle.danger)
+        self.list_id = list_id
+        self.list_name = list_name
+        self.item_ids = item_ids
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+
+        try:
+            await remove_items(self.list_id, self.item_ids)
+        except Exception as error:
+            await interaction.edit_original_response(
+                content=f"❌ I couldn't undo that: {error}", view=None
+            )
+            return
+
+        await interaction.edit_original_response(
+            content=f"↩️ Removed those items from **{self.list_name}**.",
+            view=None,
+        )
+
+
+class UndoAddView(discord.ui.View):
+    def __init__(self, list_id: str, list_name: str, item_ids: list[str]):
+        super().__init__(timeout=300)
+        self.add_item(UndoAddButton(list_id, list_name, item_ids))
+
+
+class IngredientToggleView(discord.ui.View):
+    def __init__(
+        self,
+        list_id: str,
+        list_name: str,
+        recipe_title: str,
+        ingredients: list[str],
+        locations: dict[str, str] | None = None,
+    ):
+        super().__init__(timeout=300)
+        locations = locations or {}
+        for ingredient in prioritize_ingredients(ingredients, limit=24):
+            location = locations.get(ingredient.strip().lower())
+            self.add_item(IngredientToggleButton(ingredient, location))
+        self.add_item(ConfirmGroceryButton(list_id, list_name, recipe_title))
+
+
+class ViewGroceryListSelect(discord.ui.Select):
+    def __init__(self, lists: list[dict]):
+        options = [
+            discord.SelectOption(label=grocery_list["name"], value=grocery_list["id"])
+            for grocery_list in lists[:25]
+        ]
+        super().__init__(
+            placeholder="Which list do you want to see?",
+            min_values=1,
+            max_values=1,
+            options=options,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        list_id = self.values[0]
+        list_name = next(option.label for option in self.options if option.value == list_id)
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        try:
+            contents = await get_list_contents(list_id)
+        except Exception as error:
+            await interaction.followup.send(
+                f"❌ I couldn't load that list: {error}",
+                ephemeral=True,
+            )
+            return
+
+        active = contents["active"]
+        crossed_off_count = len(contents["crossed_off"])
+
+        if not active:
+            body = "_(nothing on this list right now)_"
+        else:
+            shown = active[:GROCERY_VIEW_LIMIT]
+            body = "\n".join(f"• {item}" for item in shown)
+            if len(active) > GROCERY_VIEW_LIMIT:
+                body += f"\n_(showing the first {GROCERY_VIEW_LIMIT} of {len(active)})_"
+
+        lines = [f"🛒 **{list_name}**", body]
+        if crossed_off_count:
+            lines.append(f"_{crossed_off_count} item(s) already crossed off_")
+
+        await interaction.followup.send("\n".join(lines), ephemeral=True)
+
+
+class ViewGroceryListView(discord.ui.View):
+    def __init__(self, lists: list[dict]):
+        super().__init__(timeout=300)
+        self.add_item(ViewGroceryListSelect(lists))
 
 
 class Recipe(commands.Cog):
@@ -737,6 +921,35 @@ class Recipe(commands.Cog):
         )
 
     @app_commands.command(
+        name="grocery_list",
+        description="See what's currently on one of your OurGroceries lists",
+    )
+    async def grocery_list_view(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        try:
+            lists = await get_grocery_lists()
+        except Exception as error:
+            await interaction.followup.send(
+                f"❌ I couldn't connect to OurGroceries: {error}",
+                ephemeral=True,
+            )
+            return
+
+        if not lists:
+            await interaction.followup.send(
+                "❌ No OurGroceries lists found on that account.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.followup.send(
+            "Which list?",
+            view=ViewGroceryListView(lists),
+            ephemeral=True,
+        )
+
+    @app_commands.command(
         name="fix",
         description="Correct this recipe's name, times, or servings (run inside its thread)",
     )
@@ -842,6 +1055,13 @@ class Recipe(commands.Cog):
             view=RecipeTagView(channel, current["human_status"], current_tags),
             ephemeral=True,
         )
+
+    @app_commands.command(
+        name="help",
+        description="List every command Rosie supports",
+    )
+    async def help_command(self, interaction: discord.Interaction):
+        await interaction.response.send_message(embed=build_help_embed(), ephemeral=True)
 
 
 async def setup(bot):

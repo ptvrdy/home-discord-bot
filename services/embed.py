@@ -153,6 +153,60 @@ def build_instructions_embed(recipe: Recipe) -> discord.Embed | None:
     return embed
 
 
+HELP_SECTIONS = [
+    (
+        "📥 Import",
+        [("/recipe <url>", "Import a recipe from the web, or by hand for TikTok/unscrapeable links.")],
+    ),
+    (
+        "🏷️ Organize & Fix",
+        [
+            ("/tags", "Manually add or remove this recipe's tags. (run in its thread)"),
+            ("/fix", "Correct a recipe's name, times, or servings. (run in its thread)"),
+        ],
+    ),
+    (
+        "🔍 Find",
+        [
+            ("/find_ingredient <query>", "Search recipes by title or ingredient."),
+            ("/random [tag]", "Suggest a random recipe, optionally filtered by tag."),
+            ("/needs_review", "List every recipe still marked Needs Review."),
+        ],
+    ),
+    (
+        "⭐ Review & Stats",
+        [
+            ("/review", "Log that you made/reviewed a recipe, rate it, leave notes. (run in its thread)"),
+            ("/cooking_stats", "Top rated, most cooked, and who's been logging reviews."),
+        ],
+    ),
+    (
+        "🛒 Grocery Shopping",
+        [
+            ("/shopping_list", "Add a recipe's ingredients to an OurGroceries list. (run in its thread)"),
+            ("/grocery_list", "See what's currently on one of your OurGroceries lists."),
+        ],
+    ),
+    (
+        "⚙️ Admin",
+        [("/check_setup", "Verify every configured tag actually matches a tag on the forum.")],
+    ),
+]
+
+
+def build_help_embed() -> discord.Embed:
+    embed = discord.Embed(
+        title="🍒 Rosie's Recipe Box — Commands",
+        description="Commands marked \"(run in its thread)\" only work inside a recipe's forum thread.",
+        color=RECIPE_BOX_COLOR,
+    )
+    for section_name, commands in HELP_SECTIONS:
+        value = "\n".join(f"**{name}** — {description}" for name, description in commands)
+        embed.add_field(name=section_name, value=value, inline=False)
+    embed.set_footer(text="🍒 Filed in Rosie's Recipe Box")
+    return embed
+
+
 def build_stats_embed(stats: dict) -> discord.Embed:
     """Render aggregate household cooking stats (box size, review backlog,
     top-rated/most-cooked recipes, per-person activity) into one embed."""

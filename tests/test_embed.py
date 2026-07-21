@@ -7,6 +7,7 @@ from services.embed import (
     INGREDIENT_FIELD_LIMIT,
     INSTRUCTIONS_DESCRIPTION_LIMIT,
     _truncate_ingredient_lines,
+    build_help_embed,
     build_instructions_embed,
     build_stats_embed,
     create_recipe_embed,
@@ -119,6 +120,20 @@ class RecipeEmbedTests(unittest.TestCase):
         self.assertIn("2x", fields["Most Cooked"])
         self.assertIn("Peyton: 2", fields["Reviews Logged"])
         self.assertIn("Husband: 1", fields["Reviews Logged"])
+
+    def test_help_embed_lists_every_command_group(self):
+        embed = build_help_embed()
+        fields = {field.name: field.value for field in embed.fields}
+
+        for group in ("📥 Import", "🏷️ Organize & Fix", "🔍 Find", "⭐ Review & Stats", "🛒 Grocery Shopping", "⚙️ Admin"):
+            self.assertIn(group, fields)
+
+        self.assertIn("/recipe", fields["📥 Import"])
+        self.assertIn("/shopping_list", fields["🛒 Grocery Shopping"])
+        self.assertIn("/grocery_list", fields["🛒 Grocery Shopping"])
+        self.assertLessEqual(
+            sum(len(name) + len(value) for name, value in fields.items()), 6000
+        )
 
 
 if __name__ == "__main__":
