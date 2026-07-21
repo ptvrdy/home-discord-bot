@@ -2,5 +2,4 @@
 __pycache__/
 *.pyc
 data/*.db
-commands/__pycache__/recipe_commands.cpython-314.pyc
-commands/__pycache__/recipe_commands.cpython-314.pyc
+.vscode/
