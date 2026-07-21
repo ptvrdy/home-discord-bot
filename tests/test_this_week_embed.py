@@ -87,7 +87,7 @@ class BuildThisWeekEmbedTests(unittest.TestCase):
         )
 
     def test_event_line_includes_source_tag(self):
-        event = _timed_event("Family Dinner", date(2026, 7, 20), 18, sources=("Peyton", "Family"))
+        event = _timed_event("Family Dinner", date(2026, 7, 20), 18, sources=("Personal", "Family"))
 
         embed = build_this_week_embed(MONDAY, [event], [], NOW)
 

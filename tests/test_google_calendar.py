@@ -12,11 +12,11 @@ from services.google_calendar import (
 
 class GetConfiguredCalendarsTests(unittest.TestCase):
     def test_returns_only_calendars_with_an_id_set(self):
-        env = {"PEYTON_CALENDAR_ID": "me@example.com", "FAMILY_CALENDAR_ID": "fam@group.calendar.google.com"}
+        env = {"PERSONAL_CALENDAR_ID": "me@example.com", "FAMILY_CALENDAR_ID": "fam@group.calendar.google.com"}
         with patch.dict("os.environ", env, clear=True):
             self.assertEqual(
                 get_configured_calendars(),
-                {"Peyton": "me@example.com", "Family": "fam@group.calendar.google.com"},
+                {"Personal": "me@example.com", "Family": "fam@group.calendar.google.com"},
             )
 
     def test_returns_empty_when_nothing_configured(self):
@@ -25,7 +25,7 @@ class GetConfiguredCalendarsTests(unittest.TestCase):
 
     def test_supports_all_four_configured_calendars(self):
         env = {
-            "PEYTON_CALENDAR_ID": "peyton@example.com",
+            "PERSONAL_CALENDAR_ID": "me@example.com",
             "PARTNER_CALENDAR_ID": "partner@example.com",
             "FAMILY_CALENDAR_ID": "fam@group.calendar.google.com",
             "DISCORD_CALENDAR_ID": "gaming@group.calendar.google.com",
@@ -34,7 +34,7 @@ class GetConfiguredCalendarsTests(unittest.TestCase):
             self.assertEqual(
                 get_configured_calendars(),
                 {
-                    "Peyton": "peyton@example.com",
+                    "Personal": "me@example.com",
                     "Partner": "partner@example.com",
                     "Family": "fam@group.calendar.google.com",
                     "Discord (Gaming)": "gaming@group.calendar.google.com",
@@ -44,39 +44,39 @@ class GetConfiguredCalendarsTests(unittest.TestCase):
 
 class CheckCalendarAccessTests(unittest.TestCase):
     def test_reports_ok_for_each_reachable_calendar(self):
-        env = {"PEYTON_CALENDAR_ID": "me@example.com", "FAMILY_CALENDAR_ID": "fam@group.calendar.google.com"}
+        env = {"PERSONAL_CALENDAR_ID": "me@example.com", "FAMILY_CALENDAR_ID": "fam@group.calendar.google.com"}
         service = MagicMock()
         service.calendars().get().execute.side_effect = [
-            {"summary": "Peyton's Calendar"},
+            {"summary": "Personal Calendar"},
             {"summary": "Household"},
         ]
 
         with patch.dict("os.environ", env, clear=True):
             results = check_calendar_access(service=service)
 
-        self.assertEqual(results["Peyton"], {"ok": True, "summary": "Peyton's Calendar"})
+        self.assertEqual(results["Personal"], {"ok": True, "summary": "Personal Calendar"})
         self.assertEqual(results["Family"], {"ok": True, "summary": "Household"})
 
     def test_reports_error_for_an_unreachable_calendar(self):
-        env = {"PEYTON_CALENDAR_ID": "me@example.com"}
+        env = {"PERSONAL_CALENDAR_ID": "me@example.com"}
         service = MagicMock()
         service.calendars().get().execute.side_effect = Exception("404 not shared with service account")
 
         with patch.dict("os.environ", env, clear=True):
             results = check_calendar_access(service=service)
 
-        self.assertFalse(results["Peyton"]["ok"])
-        self.assertIn("not shared", results["Peyton"]["error"])
+        self.assertFalse(results["Personal"]["ok"])
+        self.assertIn("not shared", results["Personal"]["error"])
 
     def test_falls_back_to_the_calendar_id_when_summary_is_missing(self):
-        env = {"PEYTON_CALENDAR_ID": "me@example.com"}
+        env = {"PERSONAL_CALENDAR_ID": "me@example.com"}
         service = MagicMock()
         service.calendars().get().execute.return_value = {}
 
         with patch.dict("os.environ", env, clear=True):
             results = check_calendar_access(service=service)
 
-        self.assertEqual(results["Peyton"], {"ok": True, "summary": "me@example.com"})
+        self.assertEqual(results["Personal"], {"ok": True, "summary": "me@example.com"})
 
 
 class ListEventsTests(unittest.TestCase):
@@ -115,7 +115,7 @@ class ListEventsTests(unittest.TestCase):
 
 class GetWeekEventsTests(unittest.TestCase):
     def test_fetches_and_dedupes_across_configured_calendars(self):
-        env = {"PEYTON_CALENDAR_ID": "peyton@example.com", "FAMILY_CALENDAR_ID": "fam@group.calendar.google.com"}
+        env = {"PERSONAL_CALENDAR_ID": "me@example.com", "FAMILY_CALENDAR_ID": "fam@group.calendar.google.com"}
         service = MagicMock()
         shared_event = {
             "summary": "Family Dinner",
@@ -133,10 +133,10 @@ class GetWeekEventsTests(unittest.TestCase):
 
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["name"], "Family Dinner")
-        self.assertEqual(set(events[0]["sources"]), {"Peyton", "Family"})
+        self.assertEqual(set(events[0]["sources"]), {"Personal", "Family"})
 
     def test_skips_cancelled_events(self):
-        env = {"PEYTON_CALENDAR_ID": "peyton@example.com"}
+        env = {"PERSONAL_CALENDAR_ID": "me@example.com"}
         service = MagicMock()
         service.events().list().execute.return_value = {
             "items": [

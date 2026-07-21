@@ -105,7 +105,7 @@ class Schedule(commands.Cog):
         configured = get_configured_calendars()
         if not configured:
             await interaction.response.send_message(
-                "❌ No calendars configured — set PEYTON_CALENDAR_ID, "
+                "❌ No calendars configured — set PERSONAL_CALENDAR_ID, "
                 "PARTNER_CALENDAR_ID, FAMILY_CALENDAR_ID, and/or "
                 "DISCORD_CALENDAR_ID in .env.",
                 ephemeral=True,

@@ -31,12 +31,12 @@ class NormalizeEventTests(unittest.TestCase):
             "end": {"dateTime": "2026-07-23T10:00:00-04:00"},
         }
 
-        event = normalize_event(raw, "Peyton")
+        event = normalize_event(raw, "Personal")
 
         self.assertEqual(event["name"], "Vet Appointment")
         self.assertFalse(event["all_day"])
         self.assertIsInstance(event["start"], datetime)
-        self.assertEqual(event["source"], "Peyton")
+        self.assertEqual(event["source"], "Personal")
 
     def test_all_day_event_parses_as_plain_date(self):
         raw = {
@@ -66,7 +66,7 @@ class NormalizeEventTests(unittest.TestCase):
             "htmlLink": "https://www.google.com/calendar/event?eid=abc123",
         }
 
-        event = normalize_event(raw, "Peyton")
+        event = normalize_event(raw, "Personal")
 
         self.assertEqual(event["url"], "https://www.google.com/calendar/event?eid=abc123")
 
@@ -102,7 +102,7 @@ class DeduplicateEventsTests(unittest.TestCase):
                 "start": datetime(2026, 7, 27, 18, 0, tzinfo=timezone(timedelta(hours=-4))),
                 "end": datetime(2026, 7, 27, 19, 0, tzinfo=timezone(timedelta(hours=-4))),
                 "all_day": False,
-                "source": "Peyton",
+                "source": "Personal",
             },
             {
                 "name": "Family Dinner",
@@ -116,7 +116,7 @@ class DeduplicateEventsTests(unittest.TestCase):
         result = deduplicate_events(events)
 
         self.assertEqual(len(result), 1)
-        self.assertEqual(set(result[0]["sources"]), {"Peyton", "Family"})
+        self.assertEqual(set(result[0]["sources"]), {"Personal", "Family"})
 
     def test_matches_name_case_insensitively(self):
         start = date(2026, 7, 27)
@@ -167,12 +167,12 @@ class DeduplicateEventsTests(unittest.TestCase):
         end = date(2026, 7, 28)
         events = [
             {"name": "Trip", "start": start, "end": end, "all_day": True, "source": "Family"},
-            {"name": "Trip", "start": start, "end": end, "all_day": True, "source": "Peyton"},
+            {"name": "Trip", "start": start, "end": end, "all_day": True, "source": "Personal"},
         ]
 
-        result = deduplicate_events(events, source_order=["Peyton", "Partner", "Family", "Discord (Gaming)"])
+        result = deduplicate_events(events, source_order=["Personal", "Partner", "Family", "Discord (Gaming)"])
 
-        self.assertEqual(result[0]["sources"], ["Peyton", "Family"])
+        self.assertEqual(result[0]["sources"], ["Personal", "Family"])
 
     def test_sorts_sources_alphabetically_when_no_order_given(self):
         start = date(2026, 7, 27)
@@ -189,7 +189,7 @@ class DeduplicateEventsTests(unittest.TestCase):
 
 class FormatEventSourcesTests(unittest.TestCase):
     def test_joins_sources_with_a_dot(self):
-        self.assertEqual(format_event_sources(["Peyton", "Family"]), "📅 Personal · Family")
+        self.assertEqual(format_event_sources(["Personal", "Family"]), "📅 Personal · Family")
 
     def test_single_source(self):
         self.assertEqual(format_event_sources(["Family"]), "📅 Family")

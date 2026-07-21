@@ -13,7 +13,7 @@ Setup (see README's Google Calendar section for the full walkthrough):
 3. Share each calendar with the service account's email, with
    "Make changes to events" permission.
 4. Point GOOGLE_SERVICE_ACCOUNT_FILE at the downloaded key and set
-   PEYTON_CALENDAR_ID / PARTNER_CALENDAR_ID / FAMILY_CALENDAR_ID /
+   PERSONAL_CALENDAR_ID / PARTNER_CALENDAR_ID / FAMILY_CALENDAR_ID /
    DISCORD_CALENDAR_ID in .env.
 """
 
@@ -29,12 +29,12 @@ from services.schedule import deduplicate_events, normalize_event
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
-# Label -> env var holding that calendar's ID. Personal is one household member's
-# personal calendar; Partner is theirs (added once they set one up); Family
-# is the shared household calendar; Discord is the separate calendar used to
-# schedule gaming nights (Minecraft Mondays, BG3, movie nights) for the
-# friends' Discord server - not household chores/tasks, but still useful to
-# show alongside everything else on #this-week.
+# Label -> env var holding that calendar's ID. Personal/Partner are each
+# household member's own calendar; Family is the shared household calendar;
+# Discord is the separate calendar used to schedule gaming nights (Minecraft
+# Mondays, BG3, movie nights) for the friends' Discord server - not
+# household chores/tasks, but still useful to show alongside everything else
+# on #this-week.
 CALENDAR_ENV_VARS = {
     "Personal": "PERSONAL_CALENDAR_ID",
     "Partner": "PARTNER_CALENDAR_ID",

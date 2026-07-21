@@ -127,11 +127,11 @@ class FormatNudgeMessageTests(unittest.TestCase):
 
     def test_mentions_who_and_how_long_ago(self):
         last_done = (NOW - timedelta(days=16)).isoformat()
-        chore = _chore(name="Mop", last_done_at=last_done, last_done_by="Peyton")
+        chore = _chore(name="Mop", last_done_at=last_done, last_done_by="Alex")
 
         message = format_nudge_message(chore, NOW)
 
-        self.assertIn("Peyton", message)
+        self.assertIn("Alex", message)
         self.assertIn("16 days ago", message)
 
     def test_uses_singular_day(self):

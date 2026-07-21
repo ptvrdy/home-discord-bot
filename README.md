@@ -134,10 +134,10 @@ one-off task scheduling (`/week`, `/task`) — see Roadmap below.
 
 ## Google Calendar setup
 
-The bot reads (and will eventually write to) up to 4 calendars — one household member's personal
-calendar, a partner's personal calendar, a shared family calendar, and a separate
-"Discord (Gaming)" calendar used to schedule game nights (Minecraft Mondays, BG3,
-movie nights) for the friends' Discord server — using a single Google **service
+The bot reads (and will eventually write to) up to 4 calendars — your personal
+calendar, your partner's personal calendar, a shared family calendar, and a separate
+"Discord (Gaming)" calendar used to schedule game nights for a friends' Discord
+server — using a single Google **service
 account** rather than a per-user OAuth login. That means no browser consent screen
 inside the bot and no refresh tokens to manage; instead, the bot has its own Google
 identity, and each calendar owner does a one-time share, the same way you'd share a
@@ -159,7 +159,7 @@ requirement to have all of them set up before the bot is useful.
 5. **Copy the service account's email.** It looks like
    `household-hub-bot@your-project-id.iam.gserviceaccount.com` — find it on the
    service account's details page.
-6. **Share each calendar with that email**, once per calendar (yours, a
+6. **Share each calendar with that email**, once per calendar (yours, your
    partner's, the shared family one, and/or the Discord gaming one): open Google
    Calendar → hover the calendar → ⋮ → *Settings and sharing* → *Share with
    specific people* → paste the service account's email → set permission to
@@ -172,7 +172,7 @@ requirement to have all of them set up before the bot is useful.
 8. Set these in `.env`:
    ```
    GOOGLE_SERVICE_ACCOUNT_FILE=google-service-account.json   # optional, this is the default
-   PEYTON_CALENDAR_ID=you@gmail.com
+   PERSONAL_CALENDAR_ID=you@gmail.com
    PARTNER_CALENDAR_ID=partner@gmail.com
    FAMILY_CALENDAR_ID=abc123@group.calendar.google.com
    DISCORD_CALENDAR_ID=def456@group.calendar.google.com
@@ -274,7 +274,7 @@ tests/                       Unit tests (unittest) for the services above
    OURGROCERIES_PASSWORD=your-ourgroceries-password
    NUDGES_CHANNEL_ID=123456789012345678   # optional, enables chore nudges
    GOOGLE_SERVICE_ACCOUNT_FILE=google-service-account.json   # optional, see below
-   PEYTON_CALENDAR_ID=you@gmail.com                          # optional, see below
+   PERSONAL_CALENDAR_ID=you@gmail.com                        # optional, see below
    PARTNER_CALENDAR_ID=partner@gmail.com                     # optional, see below
    FAMILY_CALENDAR_ID=abc123@group.calendar.google.com       # optional, see below
    DISCORD_CALENDAR_ID=def456@group.calendar.google.com      # optional, see below
