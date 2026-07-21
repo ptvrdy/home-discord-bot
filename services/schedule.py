@@ -30,6 +30,7 @@ def normalize_event(raw_event: dict, source: str) -> dict:
         "end": end,
         "all_day": not isinstance(start, datetime),
         "source": source,
+        "url": raw_event.get("htmlLink"),
     }
 
 

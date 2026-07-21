@@ -39,7 +39,8 @@ def _event_sort_key(event: dict):
 
 def _format_event_line(event: dict) -> str:
     label = "All day" if event["all_day"] else _format_time(event["start"])
-    return f"{label} — **{event['name']}** {format_event_sources(event['sources'])}"
+    name = f"[{event['name']} ↗]({event['url']})" if event.get("url") else event["name"]
+    return f"{label} — **{name}** {format_event_sources(event['sources'])}"
 
 
 def build_this_week_embed(

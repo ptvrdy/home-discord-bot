@@ -8,18 +8,19 @@ MONDAY = date(2026, 7, 20)
 NOW = datetime(2026, 7, 21, 9, 0, tzinfo=timezone.utc)
 
 
-def _timed_event(name, day, hour, sources=("Family",)):
+def _timed_event(name, day, hour, sources=("Family",), url=None):
     return {
         "name": name,
         "start": datetime(day.year, day.month, day.day, hour, 0, tzinfo=timezone.utc),
         "end": datetime(day.year, day.month, day.day, hour + 1, 0, tzinfo=timezone.utc),
         "all_day": False,
         "sources": list(sources),
+        "url": url,
     }
 
 
-def _all_day_event(name, day, sources=("Family",)):
-    return {"name": name, "start": day, "end": day, "all_day": True, "sources": list(sources)}
+def _all_day_event(name, day, sources=("Family",), url=None):
+    return {"name": name, "start": day, "end": day, "all_day": True, "sources": list(sources), "url": url}
 
 
 def _chore(**overrides):
@@ -92,6 +93,25 @@ class BuildThisWeekEmbedTests(unittest.TestCase):
 
         monday_field = next(f for f in embed.fields if f.name == "Monday, Jul 20")
         self.assertIn("📅 Personal · Family", monday_field.value)
+
+    def test_event_name_links_to_calendar_when_url_present(self):
+        event = _timed_event(
+            "Vet Appointment", date(2026, 7, 20), 9, url="https://www.google.com/calendar/event?eid=abc123"
+        )
+
+        embed = build_this_week_embed(MONDAY, [event], [], NOW)
+
+        monday_field = next(f for f in embed.fields if f.name == "Monday, Jul 20")
+        self.assertIn("[Vet Appointment ↗](https://www.google.com/calendar/event?eid=abc123)", monday_field.value)
+
+    def test_event_name_is_plain_text_without_a_url(self):
+        event = _timed_event("Vet Appointment", date(2026, 7, 20), 9, url=None)
+
+        embed = build_this_week_embed(MONDAY, [event], [], NOW)
+
+        monday_field = next(f for f in embed.fields if f.name == "Monday, Jul 20")
+        self.assertIn("**Vet Appointment**", monday_field.value)
+        self.assertNotIn("↗", monday_field.value)
 
     def test_overdue_chores_get_their_own_field(self):
         chores = [_chore(name="Mop", last_done_at=None)]

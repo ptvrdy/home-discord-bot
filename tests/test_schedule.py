@@ -58,6 +58,25 @@ class NormalizeEventTests(unittest.TestCase):
 
         self.assertEqual(event["name"], "(untitled event)")
 
+    def test_captures_the_calendar_event_link(self):
+        raw = {
+            "summary": "Vet Appointment",
+            "start": {"date": "2026-07-25"},
+            "end": {"date": "2026-07-26"},
+            "htmlLink": "https://www.google.com/calendar/event?eid=abc123",
+        }
+
+        event = normalize_event(raw, "Peyton")
+
+        self.assertEqual(event["url"], "https://www.google.com/calendar/event?eid=abc123")
+
+    def test_url_is_none_when_not_present(self):
+        raw = {"start": {"date": "2026-07-25"}, "end": {"date": "2026-07-26"}}
+
+        event = normalize_event(raw, "Family")
+
+        self.assertIsNone(event["url"])
+
 
 class DeduplicateEventsTests(unittest.TestCase):
     def test_merges_identical_events_from_two_calendars(self):
