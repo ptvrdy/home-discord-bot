@@ -47,6 +47,12 @@ from `#general` or anywhere else.
 |---|---|
 | `/done <chore>` | Mark a chore as completed (autocomplete search by name). Optionally attribute it to someone else instead of yourself. Chore reminders post automatically in #nudges at 9am and 5pm once a chore passes its threshold. |
 
+## 📅 Schedule
+
+| Command | What it does |
+|---|---|
+| `/refresh_this_week` | Manually rebuild the single #this-week schedule embed (events across every configured calendar, deduplicated, plus chore status) instead of waiting for the daily 6am refresh. |
+
 ## ⚙️ Admin
 
 | Command | What it does |

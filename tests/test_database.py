@@ -19,10 +19,12 @@ from services.database import (
     get_recipe_by_url,
     get_recipe_tags,
     get_recipes_needing_review,
+    get_state,
     initialize_database,
     mark_chore_done,
     mark_nudge_sent,
     save_recipe,
+    set_state,
     search_recipe_titles,
     search_recipes,
     set_journal_message_id,
@@ -638,6 +640,34 @@ class ChoreDatabaseTests(unittest.TestCase):
 
             chores = {c["name"]: c for c in get_all_chores(database_path)}
             self.assertEqual(chores["Mop"]["nudge_sent_at"], sent_at.isoformat())
+
+
+class BotStateTests(unittest.TestCase):
+    def test_returns_none_for_unset_key(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+
+            self.assertIsNone(get_state("this_week_message_id", database_path))
+
+    def test_round_trips_a_value(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+
+            set_state("this_week_message_id", "12345", database_path)
+
+            self.assertEqual(get_state("this_week_message_id", database_path), "12345")
+
+    def test_setting_again_overwrites_the_previous_value(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+
+            set_state("this_week_message_id", "111", database_path)
+            set_state("this_week_message_id", "222", database_path)
+
+            self.assertEqual(get_state("this_week_message_id", database_path), "222")
 
     def test_get_recipe_by_title_finds_exact_case_insensitive_match(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

@@ -94,6 +94,11 @@ def initialize_database(database_path: Path = DATABASE_PATH) -> None:
                 last_done_by TEXT,
                 nudge_sent_at TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS bot_state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             """
         )
         _ensure_column(connection, "recipes", "journal_message_id", "INTEGER")
@@ -668,4 +673,29 @@ def mark_nudge_sent(
         connection.execute(
             "UPDATE chores SET nudge_sent_at = ? WHERE name = ? COLLATE NOCASE",
             (sent_at.isoformat(), name),
+        )
+
+
+def get_state(key: str, database_path: Path = DATABASE_PATH) -> str | None:
+    """Read a single value from the generic bot_state key/value store, used
+    for small pieces of durable state that don't warrant their own table
+    (e.g. which message ID the #this-week embed lives at)."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        row = connection.execute(
+            "SELECT value FROM bot_state WHERE key = ?", (key,)
+        ).fetchone()
+        return row[0] if row else None
+
+
+def set_state(key: str, value: str, database_path: Path = DATABASE_PATH) -> None:
+    """Write a single value to the generic bot_state key/value store."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO bot_state (key, value) VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (key, value),
         )

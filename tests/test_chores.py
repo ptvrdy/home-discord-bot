@@ -1,7 +1,13 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from services.chores import chores_needing_nudge, days_since, format_nudge_message, is_overdue
+from services.chores import (
+    chores_due_soon,
+    chores_needing_nudge,
+    days_since,
+    format_nudge_message,
+    is_overdue,
+)
 
 
 NOW = datetime(2026, 7, 21, 9, 0, tzinfo=timezone.utc)
@@ -43,6 +49,33 @@ class IsOverdueTests(unittest.TestCase):
     def test_overdue_past_threshold(self):
         last_done = (NOW - timedelta(days=30)).isoformat()
         self.assertTrue(is_overdue(_chore(threshold_days=14, last_done_at=last_done), NOW))
+
+
+class ChoresDueSoonTests(unittest.TestCase):
+    def test_excludes_chores_already_overdue(self):
+        chores = [_chore(name="Mop", threshold_days=14, last_done_at=None)]
+
+        self.assertEqual(chores_due_soon(chores, NOW), [])
+
+    def test_includes_chores_within_the_lookahead_window(self):
+        last_done = (NOW - timedelta(days=12)).isoformat()
+        chores = [_chore(name="Mop", threshold_days=14, last_done_at=last_done)]
+
+        result = chores_due_soon(chores, NOW, lookahead_days=3)
+
+        self.assertEqual([c["name"] for c in result], ["Mop"])
+
+    def test_excludes_chores_outside_the_lookahead_window(self):
+        last_done = (NOW - timedelta(days=5)).isoformat()
+        chores = [_chore(name="Mop", threshold_days=14, last_done_at=last_done)]
+
+        self.assertEqual(chores_due_soon(chores, NOW, lookahead_days=3), [])
+
+    def test_excludes_never_done_chores(self):
+        # Never-done chores are always overdue already, not "coming up".
+        chores = [_chore(name="Clean oven", last_done_at=None)]
+
+        self.assertEqual(chores_due_soon(chores, NOW), [])
 
 
 class ChoresNeedingNudgeTests(unittest.TestCase):

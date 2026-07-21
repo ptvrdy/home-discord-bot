@@ -194,6 +194,10 @@ HELP_SECTIONS = [
         [("/done <chore>", "Mark a chore as completed. Add someone to attribute it to them instead of yourself.")],
     ),
     (
+        "📅 Schedule",
+        [("/refresh_this_week", "Manually rebuild the #this-week schedule embed instead of waiting for the daily refresh.")],
+    ),
+    (
         "⚙️ Admin",
         [
             ("/check_setup", "Verify every configured tag actually matches a tag on the forum."),

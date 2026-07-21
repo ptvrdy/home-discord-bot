@@ -22,6 +22,23 @@ def is_overdue(chore: dict, now: datetime) -> bool:
     return days is None or days >= chore["threshold_days"]
 
 
+def chores_due_soon(chores: list[dict], now: datetime, lookahead_days: int = 3) -> list[dict]:
+    """Chores that aren't overdue yet but will be within `lookahead_days` -
+    for a "coming up" heads-up rather than a reactive nudge. Chores with no
+    done history are always overdue already, so they're excluded here (they
+    belong in the overdue list, not this one)."""
+    result = []
+    for chore in chores:
+        if is_overdue(chore, now):
+            continue
+        days = days_since(chore["last_done_at"], now)
+        if days is None:
+            continue
+        if chore["threshold_days"] - days <= lookahead_days:
+            result.append(chore)
+    return result
+
+
 def chores_needing_nudge(chores: list[dict], now: datetime) -> list[dict]:
     """Overdue chores that haven't already been nudged for this stretch.
     /done clears nudge_sent_at, so a chore only re-enters this list once it

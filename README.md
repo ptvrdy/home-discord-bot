@@ -112,6 +112,23 @@ else). Each chore has a nudge threshold in days and remembers who last did it an
   [`config/chores.py`](config/chores.py); editing that file only affects new
   installs, since existing chores already have their own history in SQLite.
 
+## #this-week
+
+A single message in a channel of your choice (set via `THIS_WEEK_CHANNEL_ID`) that
+gets rebuilt every morning at 6am household time — never a new message, always the
+same one edited in place. It shows:
+
+- The current week (Monday–Sunday), one field per day, with every event from every
+  configured Google Calendar — deduplicated across calendars and tagged with which
+  calendar(s) it came from (e.g. `📅 Personal · Family`).
+- Chore status — anything overdue, and anything coming due within the next few days.
+
+Run **`/refresh_this_week`** any time to rebuild it immediately instead of waiting
+for the next morning — handy right after setup, or after adding/removing a calendar.
+If a calendar can't be reached (not shared yet, bad ID), the embed still posts with
+an error field instead of failing silently — pair it with `/check_calendar_setup`
+to pin down which calendar needs attention.
+
 This is the first piece of a broader plan to fold in shared-calendar awareness and
 one-off task scheduling (`/week`, `/task`) — see Roadmap below.
 
@@ -212,7 +229,8 @@ bot.py                     Entry point: loads the cogs, syncs slash commands, in
 commands/
     recipe_commands.py     Recipe box slash commands + modals/views
     chore_commands.py      /done + the background nudge scheduler
-    schedule_commands.py   Google Calendar diagnostics; home for /task and /week
+    schedule_commands.py   Calendar diagnostics, the #this-week refresh loop, and
+                            eventually /task and /week
 
 models/
     recipe_card.py         Recipe dataclass — the shape every recipe takes regardless of source
@@ -227,6 +245,8 @@ services/
     grocery_list.py          OurGroceries integration
     chores.py                Pure chore-overdue logic (no Discord, no SQLite)
     google_calendar.py       Google Calendar service-account integration
+    schedule.py               Pure event date-math/dedup/formatting logic
+    this_week_embed.py        Builds the #this-week embed layout
     image_layout.py          Decides thumbnail vs. full-size image based on aspect ratio
     time_parser.py           Parses "PT1H30M" / "2 hours" / "20" into minutes
     database.py              SQLite schema, migrations, and all persistence
@@ -258,6 +278,7 @@ tests/                       Unit tests (unittest) for the services above
    PARTNER_CALENDAR_ID=partner@gmail.com                     # optional, see below
    FAMILY_CALENDAR_ID=abc123@group.calendar.google.com       # optional, see below
    DISCORD_CALENDAR_ID=def456@group.calendar.google.com      # optional, see below
+   THIS_WEEK_CHANNEL_ID=123456789012345678                   # optional, enables #this-week
    ```
    `RECIPE_FORUM_ID` is the channel ID of your Discord **forum channel** where
    recipes get posted. The bot needs forum tags matching your logical tags
@@ -296,7 +317,8 @@ second.
   `/find_ingredient`/`/random`, not shown as a forum tag chip)
 - `/recipe_history` or similar for recipes whose journal has grown past what fits
   in a single Discord embed
-- Household hub, in progress: ✅ chore tracking (`/done`, nudges) done, ✅ Google
-  Calendar credentials/access (`/check_calendar_setup`) done; still to come —
-  reading + deduplicating events across the 3 calendars, `/task` and `/week`
-  scheduling flows, and the daily `#this-week` summary embed
+- Household hub, in progress: ✅ chore tracking (`/done`, nudges), ✅ Google
+  Calendar credentials/access (`/check_calendar_setup`), ✅ reading + deduplicating
+  events across all 4 calendars, ✅ the daily `#this-week` summary embed; still to
+  come — `/task` and `/week` scheduling flows (free-slot finding, Confirm/Pick
+  Different Time buttons)
