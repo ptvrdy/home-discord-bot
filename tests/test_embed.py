@@ -137,6 +137,7 @@ class RecipeEmbedTests(unittest.TestCase):
         self.assertIn("/meal_plan", fields["🛒 Grocery Shopping"])
         self.assertIn("/grocery_list", fields["🛒 Grocery Shopping"])
         self.assertIn("/done", fields["🧹 Household Chores"])
+        self.assertIn("/check_calendar_setup", fields["⚙️ Admin"])
         self.assertLessEqual(
             sum(len(name) + len(value) for name, value in fields.items()), 6000
         )

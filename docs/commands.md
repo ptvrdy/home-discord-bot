@@ -52,6 +52,7 @@ from `#general` or anywhere else.
 | Command | What it does |
 |---|---|
 | `/check_setup` | Compares every configured tag against what's actually on the recipe forum channel and reports mismatches or missing tags. |
+| `/check_calendar_setup` | Verifies the Google service account can reach each configured calendar (i.e. it's actually been shared), and reports the calendar name or the error for each. |
 
 ---
 

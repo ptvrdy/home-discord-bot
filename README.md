@@ -115,6 +115,56 @@ else). Each chore has a nudge threshold in days and remembers who last did it an
 This is the first piece of a broader plan to fold in shared-calendar awareness and
 one-off task scheduling (`/week`, `/task`) — see Roadmap below.
 
+## Google Calendar setup
+
+The bot reads (and will eventually write to) up to 4 calendars — one household member's personal
+calendar, a partner's personal calendar, a shared family calendar, and a separate
+"Discord (Gaming)" calendar used to schedule game nights (Minecraft Mondays, BG3,
+movie nights) for the friends' Discord server — using a single Google **service
+account** rather than a per-user OAuth login. That means no browser consent screen
+inside the bot and no refresh tokens to manage; instead, the bot has its own Google
+identity, and each calendar owner does a one-time share, the same way you'd share a
+calendar with another person. Any subset of the 4 can be configured — there's no
+requirement to have all of them set up before the bot is useful.
+
+1. **Create a Google Cloud project.** Go to
+   [console.cloud.google.com](https://console.cloud.google.com), create a new project
+   (any name, e.g. "Household Hub Bot").
+2. **Enable the Calendar API.** In that project, go to *APIs & Services → Library*,
+   search "Google Calendar API", and enable it.
+3. **Create a service account.** *APIs & Services → Credentials → Create Credentials
+   → Service account*. Give it any name (e.g. `household-hub-bot`) — no roles needed.
+4. **Create a key for it.** Open the new service account → *Keys → Add Key → Create
+   new key → JSON*. This downloads a `.json` file — save it as
+   `google-service-account.json` in the project root (already covered by
+   `.gitignore`, so it won't get committed). **Never commit or share this file** —
+   it's a live credential.
+5. **Copy the service account's email.** It looks like
+   `household-hub-bot@your-project-id.iam.gserviceaccount.com` — find it on the
+   service account's details page.
+6. **Share each calendar with that email**, once per calendar (yours, a
+   partner's, the shared family one, and/or the Discord gaming one): open Google
+   Calendar → hover the calendar → ⋮ → *Settings and sharing* → *Share with
+   specific people* → paste the service account's email → set permission to
+   **"Make changes to events"** (needed so `/week` and `/task` can create events,
+   not just read).
+7. **Find each calendar's ID.** Same *Settings and sharing* page, under
+   "Integrate calendar" → **Calendar ID**. For a personal calendar this is usually
+   just the Gmail address; for a created shared calendar it looks like
+   `abc123@group.calendar.google.com`.
+8. Set these in `.env`:
+   ```
+   GOOGLE_SERVICE_ACCOUNT_FILE=google-service-account.json   # optional, this is the default
+   PEYTON_CALENDAR_ID=you@gmail.com
+   PARTNER_CALENDAR_ID=partner@gmail.com
+   FAMILY_CALENDAR_ID=abc123@group.calendar.google.com
+   DISCORD_CALENDAR_ID=def456@group.calendar.google.com
+   ```
+   All 4 are optional and independent — set however many are ready. Run
+   `/check_calendar_setup` afterward to confirm the bot can actually reach each one
+   (a calendar that hasn't been shared yet, or a typo'd ID, shows up there instead of
+   failing silently later).
+
 ## Design notes
 
 - **Automatic tagging** — keyword-based tagging (protein, dish type, meal,
@@ -162,6 +212,7 @@ bot.py                     Entry point: loads the cogs, syncs slash commands, in
 commands/
     recipe_commands.py     Recipe box slash commands + modals/views
     chore_commands.py      /done + the background nudge scheduler
+    schedule_commands.py   Google Calendar diagnostics; home for /task and /week
 
 models/
     recipe_card.py         Recipe dataclass — the shape every recipe takes regardless of source
@@ -175,6 +226,7 @@ services/
     journal.py               Renders the cooking-log history into the journal embed
     grocery_list.py          OurGroceries integration
     chores.py                Pure chore-overdue logic (no Discord, no SQLite)
+    google_calendar.py       Google Calendar service-account integration
     image_layout.py          Decides thumbnail vs. full-size image based on aspect ratio
     time_parser.py           Parses "PT1H30M" / "2 hours" / "20" into minutes
     database.py              SQLite schema, migrations, and all persistence
@@ -201,6 +253,11 @@ tests/                       Unit tests (unittest) for the services above
    OURGROCERIES_USERNAME=your-ourgroceries-email   # optional, enables /shopping_list
    OURGROCERIES_PASSWORD=your-ourgroceries-password
    NUDGES_CHANNEL_ID=123456789012345678   # optional, enables chore nudges
+   GOOGLE_SERVICE_ACCOUNT_FILE=google-service-account.json   # optional, see below
+   PEYTON_CALENDAR_ID=you@gmail.com                          # optional, see below
+   PARTNER_CALENDAR_ID=partner@gmail.com                     # optional, see below
+   FAMILY_CALENDAR_ID=abc123@group.calendar.google.com       # optional, see below
+   DISCORD_CALENDAR_ID=def456@group.calendar.google.com      # optional, see below
    ```
    `RECIPE_FORUM_ID` is the channel ID of your Discord **forum channel** where
    recipes get posted. The bot needs forum tags matching your logical tags
@@ -239,6 +296,7 @@ second.
   `/find_ingredient`/`/random`, not shown as a forum tag chip)
 - `/recipe_history` or similar for recipes whose journal has grown past what fits
   in a single Discord embed
-- Household hub, in progress: ✅ chore tracking (`/done`, nudges) done; still to
-  come — Google Calendar reads across 3 calendars, `/task` and `/week` scheduling
-  flows, and the daily `#this-week` summary embed
+- Household hub, in progress: ✅ chore tracking (`/done`, nudges) done, ✅ Google
+  Calendar credentials/access (`/check_calendar_setup`) done; still to come —
+  reading + deduplicating events across the 3 calendars, `/task` and `/week`
+  scheduling flows, and the daily `#this-week` summary embed

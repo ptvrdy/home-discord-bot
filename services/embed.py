@@ -195,7 +195,10 @@ HELP_SECTIONS = [
     ),
     (
         "⚙️ Admin",
-        [("/check_setup", "Verify every configured tag actually matches a tag on the forum.")],
+        [
+            ("/check_setup", "Verify every configured tag actually matches a tag on the forum."),
+            ("/check_calendar_setup", "Verify the Google service account can reach each configured calendar."),
+        ],
     ),
 ]
 

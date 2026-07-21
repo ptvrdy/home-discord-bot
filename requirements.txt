@@ -5,3 +5,5 @@ httpx
 beautifulsoup4
 tzdata
 ourgroceries
+google-api-python-client
+google-auth
