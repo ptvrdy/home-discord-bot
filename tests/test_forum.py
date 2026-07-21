@@ -78,17 +78,17 @@ class ForumTagTests(unittest.TestCase):
             ],
         )
 
-    def test_matches_tags_even_when_variation_selector_is_missing(self):
-        # Discord's actual forum tag may or may not carry the invisible
-        # emoji variation-selector character our config uses, e.g. "⏱️"
-        # (with U+FE0F) vs. "⏱" (without it) both meaning the same emoji.
-        stripped_name = "".join(
-            c for c in DISCORD_TAGS["quick"]["discord_name"] if c not in (chr(0xFE0E), chr(0xFE0F))
-        )
+    def test_matches_tags_even_when_forum_has_an_extra_variation_selector(self):
+        # Discord's actual forum tag may or may not carry the invisible emoji
+        # variation-selector character, e.g. "⏱️" (with U+FE0F) vs. "⏱"
+        # (without it), both meaning the same emoji. Our config is plain; this
+        # simulates the forum tag carrying the extra selector our config lacks.
+        base_name = DISCORD_TAGS["quick"]["discord_name"]
+        decorated_name = base_name[0] + chr(0xFE0F) + base_name[1:]
         channel = SimpleNamespace(
             available_tags=[
                 SimpleNamespace(name=DISCORD_TAGS["needs_review"]["discord_name"]),
-                SimpleNamespace(name=stripped_name),
+                SimpleNamespace(name=decorated_name),
             ]
         )
 
@@ -96,7 +96,7 @@ class ForumTagTests(unittest.TestCase):
 
         self.assertEqual(
             [tag.name for tag in tags],
-            [DISCORD_TAGS["needs_review"]["discord_name"], stripped_name],
+            [DISCORD_TAGS["needs_review"]["discord_name"], decorated_name],
         )
 
     def test_replaces_a_human_status_tag_and_preserves_recipe_tags(self):
@@ -119,12 +119,11 @@ class ForumTagTests(unittest.TestCase):
         )
 
     def test_diagnose_tags_reports_ok_mismatched_and_missing(self):
-        stripped_quick = "".join(
-            c for c in DISCORD_TAGS["quick"]["discord_name"] if c not in (chr(0xFE0E), chr(0xFE0F))
-        )
+        base_name = DISCORD_TAGS["quick"]["discord_name"]
+        decorated_quick = base_name[0] + chr(0xFE0F) + base_name[1:]
         available_tag_names = [
             DISCORD_TAGS["needs_review"]["discord_name"],  # exact match
-            stripped_quick,  # matches only after normalization
+            decorated_quick,  # matches only after normalization
             # "long" is entirely absent
         ]
 
@@ -132,7 +131,7 @@ class ForumTagTests(unittest.TestCase):
 
         self.assertIn(DISCORD_TAGS["needs_review"]["discord_name"], result["ok"])
         self.assertIn(
-            (DISCORD_TAGS["quick"]["discord_name"], stripped_quick),
+            (DISCORD_TAGS["quick"]["discord_name"], decorated_quick),
             result["mismatched"],
         )
         self.assertIn(DISCORD_TAGS["long"]["discord_name"], result["missing"])

@@ -1,7 +1,7 @@
 import discord
 
 from models.recipe_card import Recipe
-from services.embed import create_recipe_embed
+from services.embed import build_instructions_embed, create_recipe_embed
 from config.discord_tags import DISCORD_TAGS
 
 
@@ -158,7 +158,13 @@ async def create_recipe_post(
         embed=embed,
         applied_tags=tags,
     )
-    return created_thread.thread
+    thread = created_thread.thread
+
+    instructions_embed = build_instructions_embed(recipe)
+    if instructions_embed is not None:
+        await thread.send(embed=instructions_embed)
+
+    return thread
 
 
 def diagnose_tags(available_tag_names: list[str]) -> dict:

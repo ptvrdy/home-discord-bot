@@ -12,21 +12,27 @@ from models.recipe_card import Recipe as RecipeData
 from services.database import (
     add_cooking_log,
     get_cooking_log_entries,
+    get_cooking_stats,
     get_journal_message_id,
     get_random_recipe,
     get_recipe_by_thread,
     get_recipe_by_url,
+    get_recipe_tags,
+    get_recipes_needing_review,
     save_recipe,
+    search_recipes,
     set_journal_message_id,
+    set_recipe_tags,
     update_recipe_status,
 )
-from services.embed import create_recipe_embed
+from services.embed import build_stats_embed, create_recipe_embed
 from services.forum import (
     HUMAN_TAGS,
     create_recipe_post,
     diagnose_tags,
     get_matching_tags,
     keep_single_human_tag,
+    normalize_tag_name,
     tags_with_human_status,
 )
 from services.journal import build_journal_embed
@@ -48,18 +54,28 @@ RECIPE_TAG_CHOICES = [
     if tag_key not in HUMAN_TAGS
 ]
 
+SEARCH_RESULT_LIMIT = 10
+NEEDS_REVIEW_LIMIT = 25
+
+
+def merge_recipe_tags(fresh_tags: list[str], existing_tags: list[str], human_status: str) -> list[str]:
+    """Combine freshly auto-detected tags with whatever's already stored, so a
+    correction (like /fix) can add newly-relevant tags without silently
+    dropping ones a person manually added via /tags."""
+    fresh_non_human = {tag for tag in fresh_tags if tag not in HUMAN_TAGS}
+    existing_non_human = {tag for tag in existing_tags if tag not in HUMAN_TAGS}
+    return [human_status] + sorted(fresh_non_human | existing_non_human)
+
 
 class RecipeReviewModal(discord.ui.Modal):
     def __init__(
         self,
         thread: discord.Thread,
         status_key: str,
-        made_recipe: bool,
     ):
         super().__init__(title="Add to Recipe Journal")
         self.thread = thread
         self.status_key = status_key
-        self.made_recipe = made_recipe
 
         self.rating = discord.ui.TextInput(
             label="⭐ Rating (1-5)",
@@ -118,7 +134,9 @@ class RecipeReviewModal(discord.ui.Modal):
                 # rather than retrying the same lookup that just failed.
                 timezone = datetime.now().astimezone().tzinfo
             made_at = datetime.now(timezone)
-            activity = "Made" if self.made_recipe else "Reviewed"
+            # Made Before / Make Again / Favorite only make sense if you made
+            # it; only "Needs Review" can mean you revisited it without cooking.
+            activity = "Made" if self.status_key != "needs_review" else "Reviewed"
 
             try:
                 add_cooking_log(
@@ -342,13 +360,14 @@ class FixRecipeModal(discord.ui.Modal, title="Fix Recipe Details"):
             source_url=self.current["source_url"],
             source_name=self.current["source_name"],
         )
-        recipe.tags = generate_recipe_tags(recipe)
-        # generate_recipe_tags always seeds a fresh "needs_review" - swap that
-        # placeholder for whatever status this recipe actually has so /fix can
-        # never accidentally revert a ⭐ Favorite back to 📝 Needs Review.
-        recipe.tags = [self.current["human_status"]] + [
-            tag for tag in recipe.tags if tag != "needs_review"
-        ]
+        fresh_tags = generate_recipe_tags(recipe)
+        existing_tags = get_recipe_tags(self.thread.id)
+        # Union freshly auto-detected tags with whatever's already stored,
+        # using the recipe's actual current status (never generate_recipe_tags'
+        # placeholder "needs_review"), so /fix can add newly-relevant tags
+        # without dropping a manually-added one (via /tags) or reverting a
+        # ⭐ Favorite back to 📝 Needs Review.
+        recipe.tags = merge_recipe_tags(fresh_tags, existing_tags, self.current["human_status"])
 
         try:
             save_recipe(recipe, self.thread.id)
@@ -369,6 +388,49 @@ class FixRecipeModal(discord.ui.Modal, title="Fix Recipe Details"):
                 f"❌ I couldn't update this recipe: {error}",
                 ephemeral=True,
             )
+
+
+class RecipeTagSelect(discord.ui.Select):
+    def __init__(self, thread: discord.Thread, human_status: str, current_tags: list[str]):
+        options = [
+            discord.SelectOption(
+                label=tag_info["discord_name"],
+                value=tag_key,
+                default=tag_key in current_tags,
+            )
+            for tag_key, tag_info in DISCORD_TAGS.items()
+            if tag_key not in HUMAN_TAGS
+        ]
+        super().__init__(
+            placeholder="Choose every tag that applies...",
+            min_values=0,
+            max_values=len(options),
+            options=options,
+        )
+        self.thread = thread
+        self.human_status = human_status
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        selected_tags = list(self.values)
+        set_recipe_tags(self.thread.id, selected_tags)
+
+        parent = self.thread.parent
+        if isinstance(parent, discord.ForumChannel):
+            full_tags = [self.human_status, *selected_tags]
+            await self.thread.edit(applied_tags=get_matching_tags(parent, full_tags))
+
+        selected_names = ", ".join(
+            DISCORD_TAGS[tag]["discord_name"] for tag in selected_tags
+        ) or "none"
+        await interaction.followup.send(f"✅ Tags updated: {selected_names}", ephemeral=True)
+
+
+class RecipeTagView(discord.ui.View):
+    def __init__(self, thread: discord.Thread, human_status: str, current_tags: list[str]):
+        super().__init__(timeout=300)
+        self.add_item(RecipeTagSelect(thread, human_status, current_tags))
 
 
 class Recipe(commands.Cog):
@@ -416,12 +478,16 @@ class Recipe(commands.Cog):
             await after.edit(applied_tags=filtered_tags)
 
         status_names = {
-            tag_info["discord_name"]: tag_key
+            normalize_tag_name(tag_info["discord_name"]): tag_key
             for tag_key, tag_info in DISCORD_TAGS.items()
-            if tag_key in {"needs_review", "made_before", "make_again", "favorite"}
+            if tag_key in HUMAN_TAGS
         }
         status = next(
-            (status_names[tag.name] for tag in filtered_tags if tag.name in status_names),
+            (
+                status_names[normalize_tag_name(tag.name)]
+                for tag in filtered_tags
+                if normalize_tag_name(tag.name) in status_names
+            ),
             None,
         )
         if status:
@@ -431,16 +497,12 @@ class Recipe(commands.Cog):
         name="review",
         description="Add a dated note and status to a recipe thread",
     )
-    @app_commands.describe(
-        status="The recipe's current family status",
-        made_recipe="Choose No if you are reviewing it without making it today",
-    )
+    @app_commands.describe(status="The recipe's current family status")
     @app_commands.choices(status=RECIPE_STATUS_CHOICES)
     async def review(
         self,
         interaction: discord.Interaction,
         status: app_commands.Choice[str],
-        made_recipe: bool = True,
     ):
         channel = interaction.channel
         if (
@@ -455,7 +517,7 @@ class Recipe(commands.Cog):
             return
 
         await interaction.response.send_modal(
-            RecipeReviewModal(channel, status.value, made_recipe)
+            RecipeReviewModal(channel, status.value)
         )
 
 
@@ -522,6 +584,63 @@ class Recipe(commands.Cog):
         await interaction.response.send_message(
             f"🎲 How about **{recipe['title']}**?\n<#{recipe['discord_thread_id']}>"
         )
+
+    @app_commands.command(
+        name="find_ingredient",
+        description="Search recipes by title or ingredient",
+    )
+    @app_commands.describe(query="Text to search for, e.g. an ingredient or dish name")
+    async def find_ingredient(self, interaction: discord.Interaction, query: str):
+        results = search_recipes(query, limit=SEARCH_RESULT_LIMIT)
+
+        if not results:
+            await interaction.response.send_message(
+                f'🔍 No recipes found matching "{query}".',
+                ephemeral=True,
+            )
+            return
+
+        lines = [f'🔍 Found {len(results)} recipe(s) matching "{query}":']
+        lines += [
+            f"• **{result['title']}** — <#{result['discord_thread_id']}>"
+            for result in results
+        ]
+        if len(results) == SEARCH_RESULT_LIMIT:
+            lines.append(
+                f"_(showing the first {SEARCH_RESULT_LIMIT} matches — "
+                "try a more specific search to narrow it down)_"
+            )
+
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+    @app_commands.command(
+        name="needs_review",
+        description="List recipes still marked Needs Review",
+    )
+    async def needs_review(self, interaction: discord.Interaction):
+        results = get_recipes_needing_review(limit=NEEDS_REVIEW_LIMIT)
+
+        if not results:
+            await interaction.response.send_message("📝 Nothing needs review right now!")
+            return
+
+        lines = [f"📝 {len(results)} recipe(s) still need review:"]
+        lines += [
+            f"• **{result['title']}** — <#{result['discord_thread_id']}>"
+            for result in results
+        ]
+        if len(results) == NEEDS_REVIEW_LIMIT:
+            lines.append(f"_(showing the first {NEEDS_REVIEW_LIMIT} — there may be more)_")
+
+        await interaction.response.send_message("\n".join(lines))
+
+    @app_commands.command(
+        name="cooking_stats",
+        description="See household cooking stats: top rated, most cooked, and who's been busy",
+    )
+    async def cooking_stats(self, interaction: discord.Interaction):
+        stats = get_cooking_stats()
+        await interaction.response.send_message(embed=build_stats_embed(stats))
 
     @app_commands.command(
         name="fix",
@@ -597,6 +716,38 @@ class Recipe(commands.Cog):
             lines += [f"  • {name}" for name in result["missing"]]
 
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+    @app_commands.command(
+        name="tags",
+        description="Manually choose which tags apply to this recipe (run inside its thread)",
+    )
+    async def tags(self, interaction: discord.Interaction):
+        channel = interaction.channel
+        if (
+            self.recipe_forum_id is None
+            or not isinstance(channel, discord.Thread)
+            or channel.parent_id != self.recipe_forum_id
+        ):
+            await interaction.response.send_message(
+                "❌ Use this command inside a recipe thread.",
+                ephemeral=True,
+            )
+            return
+
+        current = get_recipe_by_thread(channel.id)
+        if current is None:
+            await interaction.response.send_message(
+                "❌ This recipe isn't in the database yet.",
+                ephemeral=True,
+            )
+            return
+
+        current_tags = get_recipe_tags(channel.id)
+        await interaction.response.send_message(
+            "Select every tag that applies:",
+            view=RecipeTagView(channel, current["human_status"], current_tags),
+            ephemeral=True,
+        )
 
 
 async def setup(bot):

@@ -61,7 +61,7 @@ DISCORD_TAGS = {
     },
     "quick": {
         "category": "time",
-        "discord_name": "⏱️ Quick",
+        "discord_name": "⏱ Quick",
         "description": "30 minutes or less",
     },
     "long": {
@@ -83,7 +83,7 @@ DISCORD_TAGS = {
     },
     "dinner": {
         "category": "meal",
-        "discord_name": "🍽️ Dinner",
+        "discord_name": "🍽 Dinner",
         "description": "Great for dinner",
     },
 

@@ -6,7 +6,9 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
+from config.recipe_keywords import RECIPE_KEYWORDS
 from models.recipe_card import Recipe
+from services.recipe_tags import matches_keyword
 
 
 DATABASE_PATH = Path(__file__).resolve().parents[1] / "data" / "rosies_recipe_box.db"
@@ -340,3 +342,179 @@ def get_recipe_by_url(
             (source_url,),
         ).fetchone()
         return dict(row) if row else None
+
+
+def get_recipes_needing_review(
+    limit: int = 25,
+    database_path: Path = DATABASE_PATH,
+) -> list[dict]:
+    """Return recipes still marked needs_review, oldest first."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT title, discord_thread_id
+            FROM recipes
+            WHERE human_status = 'needs_review'
+            ORDER BY created_at ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_recipe_tags(
+    discord_thread_id: int,
+    database_path: Path = DATABASE_PATH,
+) -> list[str]:
+    """Return every tag (human status included) currently stored for a recipe."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        recipe_row = connection.execute(
+            "SELECT id FROM recipes WHERE discord_thread_id = ?",
+            (discord_thread_id,),
+        ).fetchone()
+        if recipe_row is None:
+            return []
+
+        rows = connection.execute(
+            "SELECT tag FROM recipe_tags WHERE recipe_id = ?",
+            (recipe_row[0],),
+        ).fetchall()
+        return [row[0] for row in rows]
+
+
+def set_recipe_tags(
+    discord_thread_id: int,
+    tags: list[str],
+    database_path: Path = DATABASE_PATH,
+) -> bool:
+    """Replace a recipe's non-human tags with exactly this set, leaving its
+    human status tag (set via /review) untouched. Returns false for recipes
+    not yet in the database."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        recipe_row = connection.execute(
+            "SELECT id FROM recipes WHERE discord_thread_id = ?",
+            (discord_thread_id,),
+        ).fetchone()
+        if recipe_row is None:
+            return False
+
+        recipe_id = recipe_row[0]
+        connection.execute(
+            "DELETE FROM recipe_tags WHERE recipe_id = ? AND tag NOT IN (?, ?, ?, ?)",
+            (recipe_id, "needs_review", "made_before", "make_again", "favorite"),
+        )
+        connection.executemany(
+            "INSERT OR IGNORE INTO recipe_tags (recipe_id, tag) VALUES (?, ?)",
+            [(recipe_id, tag) for tag in dict.fromkeys(tags)],
+        )
+        return True
+
+
+def _word_matches(text: str, word: str) -> bool:
+    """If the word is a known recipe tag (e.g. "beef"), reuse the exact same
+    include/exclude guardrails used for auto-tagging, so a search for "beef"
+    doesn't match a recipe whose only beef-related text is "beef broth" - and
+    also picks up synonyms like "ribeye" or "brisket" for free. Otherwise,
+    fall back to a plain substring check."""
+    if word in RECIPE_KEYWORDS:
+        return matches_keyword(text, word)
+    return word in text
+
+
+def search_recipes(
+    query: str,
+    limit: int = 10,
+    database_path: Path = DATABASE_PATH,
+) -> list[dict]:
+    """Find recipes where every word in the query matches somewhere in the
+    title or ingredients - not necessarily together, and not necessarily in
+    the same field, so "chicken thighs" matches a recipe titled "Slow Cooker
+    Chicken" whose ingredients just say "thighs"."""
+    initialize_database(database_path)
+    words = [word.lower() for word in query.split()]
+    if not words:
+        return []
+
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            "SELECT title, discord_thread_id, ingredients_json FROM recipes ORDER BY title"
+        ).fetchall()
+
+    matches = []
+    for row in rows:
+        ingredients_text = " ".join(json.loads(row["ingredients_json"]))
+        combined_text = f"{row['title']} {ingredients_text}".lower()
+
+        if all(_word_matches(combined_text, word) for word in words):
+            matches.append({"title": row["title"], "discord_thread_id": row["discord_thread_id"]})
+        if len(matches) >= limit:
+            break
+
+    return matches
+
+
+def get_cooking_stats(
+    top_n: int = 5,
+    database_path: Path = DATABASE_PATH,
+) -> dict:
+    """Aggregate the cooking-log history into household-wide stats: box size,
+    review backlog, top-rated and most-cooked recipes, and how many entries
+    each person has logged."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+
+        total_recipes = connection.execute("SELECT COUNT(*) FROM recipes").fetchone()[0]
+        needs_review_count = connection.execute(
+            "SELECT COUNT(*) FROM recipes WHERE human_status = 'needs_review'"
+        ).fetchone()[0]
+
+        top_rated = connection.execute(
+            """
+            SELECT r.title, r.discord_thread_id,
+                   AVG(cl.rating) AS avg_rating, COUNT(cl.rating) AS times_rated
+            FROM recipes r
+            JOIN cooking_log cl ON cl.recipe_id = r.id
+            WHERE cl.rating IS NOT NULL
+            GROUP BY r.id
+            ORDER BY avg_rating DESC, times_rated DESC
+            LIMIT ?
+            """,
+            (top_n,),
+        ).fetchall()
+
+        most_cooked = connection.execute(
+            """
+            SELECT r.title, r.discord_thread_id, COUNT(cl.id) AS times_made
+            FROM recipes r
+            JOIN cooking_log cl ON cl.recipe_id = r.id
+            WHERE cl.activity = 'Made'
+            GROUP BY r.id
+            ORDER BY times_made DESC
+            LIMIT ?
+            """,
+            (top_n,),
+        ).fetchall()
+
+        by_author = connection.execute(
+            """
+            SELECT author_name, COUNT(*) AS entry_count
+            FROM cooking_log
+            GROUP BY author_name
+            ORDER BY entry_count DESC
+            """
+        ).fetchall()
+
+        return {
+            "total_recipes": total_recipes,
+            "needs_review_count": needs_review_count,
+            "top_rated": [dict(row) for row in top_rated],
+            "most_cooked": [dict(row) for row in most_cooked],
+            "by_author": [dict(row) for row in by_author],
+        }

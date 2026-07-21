@@ -36,6 +36,13 @@ lives only in a Discord message.
   regenerates and reapplies forum tags, renames the thread if the title changed,
   and edits the recipe card in place — all while preserving whatever human status
   (⭐ Favorite, etc.) the recipe already has.
+- **`/tags`** (run inside a recipe's thread) — a multi-select menu, pre-checked
+  with the recipe's current tags, for manually adding or removing any of the 16
+  non-human tags (e.g. marking a recipe `dinner` even though nothing in its text
+  matched that keyword). Syncs immediately to both SQLite and the thread's
+  applied forum tags. A tag added this way survives future `/fix` calls — `/fix`
+  unions freshly auto-detected tags with whatever's already stored rather than
+  replacing the set outright, so a manual addition never gets silently dropped.
 - **`/random [tag]`** — suggests a random recipe, optionally filtered to one of
   the configured tags, with a jump link to its thread.
 - **`/check_setup`** — compares every tag in `config/discord_tags.py` against
@@ -63,7 +70,7 @@ lives only in a Discord message.
 bot.py                     Entry point: loads the cog, syncs slash commands, initializes the DB
 
 commands/
-    recipe_commands.py     /recipe, /review, /fix, /random, /check_setup + modals
+    recipe_commands.py     /recipe, /review, /fix, /tags, /random, /check_setup + modals
 
 models/
     recipe_card.py         Recipe dataclass — the shape every recipe takes regardless of source
