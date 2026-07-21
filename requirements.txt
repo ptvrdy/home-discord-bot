@@ -4,3 +4,4 @@ recipe-scrapers
 httpx
 beautifulsoup4
 tzdata
+ourgroceries

@@ -35,6 +35,7 @@ from services.forum import (
     normalize_tag_name,
     tags_with_human_status,
 )
+from services.grocery_list import add_recipe_ingredients, get_grocery_lists
 from services.journal import build_journal_embed
 from services.recipe_tags import generate_recipe_tags
 from services.scraper import scrape_recipe
@@ -433,6 +434,50 @@ class RecipeTagView(discord.ui.View):
         self.add_item(RecipeTagSelect(thread, human_status, current_tags))
 
 
+class GroceryListSelect(discord.ui.Select):
+    def __init__(self, recipe_title: str, ingredients: list[str], lists: list[dict]):
+        options = [
+            discord.SelectOption(label=grocery_list["name"], value=grocery_list["id"])
+            for grocery_list in lists[:25]
+        ]
+        super().__init__(
+            placeholder="Which store list should this go on?",
+            min_values=1,
+            max_values=1,
+            options=options,
+        )
+        self.recipe_title = recipe_title
+        self.ingredients = ingredients
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        list_id = self.values[0]
+        list_name = next(option.label for option in self.options if option.value == list_id)
+
+        try:
+            result = await add_recipe_ingredients(list_id, self.ingredients, self.recipe_title)
+        except Exception as error:
+            await interaction.followup.send(
+                f"❌ I couldn't update OurGroceries: {error}",
+                ephemeral=True,
+            )
+            return
+
+        lines = [f"🛒 Added to **{list_name}**:"]
+        lines += [f"• {item}" for item in result["added"]] or ["_(nothing new - already on the list)_"]
+        if result["skipped"]:
+            lines.append(f"_Already there: {', '.join(result['skipped'])}_")
+
+        await interaction.followup.send("\n".join(lines), ephemeral=True)
+
+
+class GroceryListView(discord.ui.View):
+    def __init__(self, recipe_title: str, ingredients: list[str], lists: list[dict]):
+        super().__init__(timeout=300)
+        self.add_item(GroceryListSelect(recipe_title, ingredients, lists))
+
+
 class Recipe(commands.Cog):
 
     def __init__(self, bot):
@@ -641,6 +686,55 @@ class Recipe(commands.Cog):
     async def cooking_stats(self, interaction: discord.Interaction):
         stats = get_cooking_stats()
         await interaction.response.send_message(embed=build_stats_embed(stats))
+
+    @app_commands.command(
+        name="shopping_list",
+        description="Add this recipe's ingredients to an OurGroceries list (run inside its thread)",
+    )
+    async def shopping_list(self, interaction: discord.Interaction):
+        channel = interaction.channel
+        if (
+            self.recipe_forum_id is None
+            or not isinstance(channel, discord.Thread)
+            or channel.parent_id != self.recipe_forum_id
+        ):
+            await interaction.response.send_message(
+                "❌ Use this command inside a recipe thread.",
+                ephemeral=True,
+            )
+            return
+
+        recipe = get_recipe_by_thread(channel.id)
+        if recipe is None:
+            await interaction.response.send_message(
+                "❌ This recipe isn't in the database yet.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        try:
+            lists = await get_grocery_lists()
+        except Exception as error:
+            await interaction.followup.send(
+                f"❌ I couldn't connect to OurGroceries: {error}",
+                ephemeral=True,
+            )
+            return
+
+        if not lists:
+            await interaction.followup.send(
+                "❌ No OurGroceries lists found on that account.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.followup.send(
+            "Which list should this go on?",
+            view=GroceryListView(recipe["title"], recipe["ingredients"], lists),
+            ephemeral=True,
+        )
 
     @app_commands.command(
         name="fix",
