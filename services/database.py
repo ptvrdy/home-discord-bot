@@ -459,6 +459,40 @@ def search_recipes(
     return matches
 
 
+def search_recipe_titles(
+    query: str,
+    limit: int = 25,
+    database_path: Path = DATABASE_PATH,
+) -> list[str]:
+    """Return recipe titles containing the query text, for slash-command
+    autocomplete (Discord caps autocomplete results at 25)."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        rows = connection.execute(
+            "SELECT title FROM recipes WHERE title LIKE ? ORDER BY title LIMIT ?",
+            (f"%{query}%", limit),
+        ).fetchall()
+        return [row[0] for row in rows]
+
+
+def get_recipe_by_title(
+    title: str,
+    database_path: Path = DATABASE_PATH,
+) -> dict | None:
+    """Return a recipe's title and ingredients for an exact (case-insensitive)
+    title match, used to resolve autocomplete picks into ingredient lists."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        row = connection.execute(
+            "SELECT title, ingredients_json FROM recipes WHERE title = ? COLLATE NOCASE",
+            (title,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {"title": row["title"], "ingredients": json.loads(row["ingredients_json"])}
+
+
 def get_cooking_stats(
     top_n: int = 5,
     database_path: Path = DATABASE_PATH,

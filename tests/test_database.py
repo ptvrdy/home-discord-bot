@@ -12,11 +12,13 @@ from services.database import (
     get_journal_message_id,
     get_random_recipe,
     get_recipe_by_thread,
+    get_recipe_by_title,
     get_recipe_by_url,
     get_recipe_tags,
     get_recipes_needing_review,
     initialize_database,
     save_recipe,
+    search_recipe_titles,
     search_recipes,
     set_journal_message_id,
     set_recipe_tags,
@@ -487,3 +489,52 @@ class DatabaseTests(unittest.TestCase):
 
             results = search_recipes("pasta", limit=3, database_path=database_path)
             self.assertEqual(len(results), 3)
+
+    def test_search_recipe_titles_matches_substring_case_insensitively(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            save_recipe(
+                Recipe(title="Chicken Soup", ingredients=["chicken"], source_url="https://x.com/1"),
+                1, database_path,
+            )
+            save_recipe(
+                Recipe(title="Beef Chili", ingredients=["beef"], source_url="https://x.com/2"),
+                2, database_path,
+            )
+
+            self.assertEqual(
+                search_recipe_titles("chick", database_path=database_path), ["Chicken Soup"]
+            )
+            self.assertEqual(
+                search_recipe_titles("CHILI", database_path=database_path), ["Beef Chili"]
+            )
+            self.assertEqual(search_recipe_titles("pineapple", database_path=database_path), [])
+
+    def test_search_recipe_titles_respects_limit(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            for i in range(5):
+                save_recipe(
+                    Recipe(title=f"Pasta {i}", ingredients=["pasta"], source_url=f"https://x.com/{i}"),
+                    i, database_path,
+                )
+
+            results = search_recipe_titles("pasta", limit=3, database_path=database_path)
+            self.assertEqual(len(results), 3)
+
+    def test_get_recipe_by_title_finds_exact_case_insensitive_match(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            save_recipe(
+                Recipe(title="Chicken Soup", ingredients=["chicken", "broth"], source_url="https://x.com/1"),
+                1, database_path,
+            )
+
+            found = get_recipe_by_title("chicken soup", database_path=database_path)
+            self.assertEqual(found["title"], "Chicken Soup")
+            self.assertEqual(found["ingredients"], ["chicken", "broth"])
+
+            self.assertIsNone(get_recipe_by_title("Chicken Sou", database_path=database_path))

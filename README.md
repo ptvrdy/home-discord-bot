@@ -76,6 +76,11 @@ Run `/help` in Discord any time for a categorized list of every command, or see
   already have them) are dropped first. After adding, an "Undo" button lets
   you remove exactly what was just added. See
   [OurGroceries integration](#ourgroceries-integration) below.
+- **`/combine_recipes`** — pick up to 5 recipes (autocomplete search by title
+  as you type each one) and merge their ingredients into a single
+  deduplicated shopping trip, then pick a list and toggle ingredients exactly
+  like `/shopping_list` — same pantry-staple prioritization, cross-list
+  duplicate check, and Undo button.
 - **`/grocery_list`** — pick one of your OurGroceries lists and see what's
   currently on it (and how many items are already crossed off), without
   leaving Discord.
@@ -202,6 +207,4 @@ second.
   `/find_ingredient`/`/random`, not shown as a forum tag chip)
 - `/recipe_history` or similar for recipes whose journal has grown past what fits
   in a single Discord embed
-- Multi-recipe combined shopping lists (add ingredients from several recipes into
-  one trip, deduplicated across recipes)
 - Eventually: fold into a broader household-hub bot (chores, shared calendar)

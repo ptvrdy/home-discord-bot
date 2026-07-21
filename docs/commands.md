@@ -37,6 +37,7 @@ from `#general` or anywhere else.
 | Command | What it does |
 |---|---|
 | `/shopping_list` **(run in its thread)** | Add a recipe's ingredients to an OurGroceries list. Pick which list, then uncheck anything you already have (pre-unchecked if it's already on *any* list, or a common pantry staple). An Undo button appears after adding. |
+| `/combine_recipes` | Pick up to 5 recipes (autocomplete search by title) and combine their ingredients into one deduplicated shopping list, then add to whichever OurGroceries list you choose. |
 | `/grocery_list` | View what's currently on one of your OurGroceries lists, without leaving Discord. |
 
 ## ⚙️ Admin

@@ -16,10 +16,12 @@ from services.database import (
     get_journal_message_id,
     get_random_recipe,
     get_recipe_by_thread,
+    get_recipe_by_title,
     get_recipe_by_url,
     get_recipe_tags,
     get_recipes_needing_review,
     save_recipe,
+    search_recipe_titles,
     search_recipes,
     set_journal_message_id,
     set_recipe_tags,
@@ -65,6 +67,16 @@ RECIPE_TAG_CHOICES = [
 SEARCH_RESULT_LIMIT = 10
 NEEDS_REVIEW_LIMIT = 25
 GROCERY_VIEW_LIMIT = 50
+COMBINE_TITLE_DISPLAY_LIMIT = 100
+
+
+async def recipe_title_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    return [
+        app_commands.Choice(name=title, value=title)
+        for title in search_recipe_titles(current)
+    ]
 
 
 def merge_recipe_tags(fresh_tags: list[str], existing_tags: list[str], human_status: str) -> list[str]:
@@ -74,6 +86,30 @@ def merge_recipe_tags(fresh_tags: list[str], existing_tags: list[str], human_sta
     fresh_non_human = {tag for tag in fresh_tags if tag not in HUMAN_TAGS}
     existing_non_human = {tag for tag in existing_tags if tag not in HUMAN_TAGS}
     return [human_status] + sorted(fresh_non_human | existing_non_human)
+
+
+def combine_recipe_ingredients(recipes: list[dict]) -> list[str]:
+    """Merge several recipes' ingredient lists into one, deduplicated
+    case-insensitively across recipes while keeping first-seen order and
+    original casing/wording."""
+    combined: list[str] = []
+    seen: set[str] = set()
+    for recipe in recipes:
+        for ingredient in recipe["ingredients"]:
+            key = ingredient.strip().lower()
+            if key and key not in seen:
+                seen.add(key)
+                combined.append(ingredient)
+    return combined
+
+
+def build_combined_recipe_title(recipes: list[dict], limit: int = 100) -> str:
+    """Join recipe titles for display/notes, truncated so it can't blow past
+    a reasonable message or note length when several recipes are combined."""
+    title = ", ".join(recipe["title"] for recipe in recipes)
+    if len(title) > limit:
+        title = title[: limit - 1] + "…"
+    return title
 
 
 class RecipeReviewModal(discord.ui.Modal):
@@ -917,6 +953,84 @@ class Recipe(commands.Cog):
         await interaction.followup.send(
             "Which list should this go on?",
             view=GroceryListView(recipe["title"], recipe["ingredients"], lists),
+            ephemeral=True,
+        )
+
+    @app_commands.command(
+        name="combine_recipes",
+        description="Combine ingredients from up to 5 recipes into one shopping list",
+    )
+    @app_commands.describe(
+        recipe_1="First recipe",
+        recipe_2="Optional: second recipe",
+        recipe_3="Optional: third recipe",
+        recipe_4="Optional: fourth recipe",
+        recipe_5="Optional: fifth recipe",
+    )
+    @app_commands.autocomplete(
+        recipe_1=recipe_title_autocomplete,
+        recipe_2=recipe_title_autocomplete,
+        recipe_3=recipe_title_autocomplete,
+        recipe_4=recipe_title_autocomplete,
+        recipe_5=recipe_title_autocomplete,
+    )
+    async def combine_recipes(
+        self,
+        interaction: discord.Interaction,
+        recipe_1: str,
+        recipe_2: str | None = None,
+        recipe_3: str | None = None,
+        recipe_4: str | None = None,
+        recipe_5: str | None = None,
+    ):
+        requested_titles = []
+        for title in (recipe_1, recipe_2, recipe_3, recipe_4, recipe_5):
+            if title and title not in requested_titles:
+                requested_titles.append(title)
+
+        recipes = []
+        missing_titles = []
+        for title in requested_titles:
+            recipe = get_recipe_by_title(title)
+            if recipe is None:
+                missing_titles.append(title)
+            else:
+                recipes.append(recipe)
+
+        if missing_titles:
+            quoted = ", ".join(f'"{title}"' for title in missing_titles)
+            await interaction.response.send_message(
+                f"❌ Couldn't find: {quoted} — pick a suggestion from the "
+                "autocomplete list so the title matches exactly.",
+                ephemeral=True,
+            )
+            return
+
+        combined_ingredients = combine_recipe_ingredients(recipes)
+        combined_title = build_combined_recipe_title(recipes, limit=COMBINE_TITLE_DISPLAY_LIMIT)
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        try:
+            lists = await get_grocery_lists()
+        except Exception as error:
+            await interaction.followup.send(
+                f"❌ I couldn't connect to OurGroceries: {error}",
+                ephemeral=True,
+            )
+            return
+
+        if not lists:
+            await interaction.followup.send(
+                "❌ No OurGroceries lists found on that account.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.followup.send(
+            f"🛒 Combined {len(recipes)} recipe(s) into {len(combined_ingredients)} "
+            "ingredient(s). Which list should this go on?",
+            view=GroceryListView(combined_title, combined_ingredients, lists),
             ephemeral=True,
         )
 
