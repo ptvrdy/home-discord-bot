@@ -20,7 +20,16 @@ def _timed_event(name, day, hour, sources=("Family",), url=None):
 
 
 def _all_day_event(name, day, sources=("Family",), url=None):
-    return {"name": name, "start": day, "end": day, "all_day": True, "sources": list(sources), "url": url}
+    # Google's all-day "end" is exclusive - a single-day event's end is the
+    # following day, matching how services.schedule.is_office_day expects it.
+    return {
+        "name": name,
+        "start": day,
+        "end": day + timedelta(days=1),
+        "all_day": True,
+        "sources": list(sources),
+        "url": url,
+    }
 
 
 def _chore(**overrides):
@@ -157,6 +166,74 @@ class BuildThisWeekEmbedTests(unittest.TestCase):
         embed = build_this_week_embed(MONDAY, [], [], NOW)
 
         self.assertNotIn("⚠️ Calendar Error", {f.name for f in embed.fields})
+
+    def test_no_office_status_line_when_names_not_provided(self):
+        embed = build_this_week_embed(MONDAY, [], [], NOW)
+
+        monday_field = next(f for f in embed.fields if f.name == "Monday, Jul 20")
+        self.assertNotIn("🏢", monday_field.value)
+        self.assertNotIn("🏠", monday_field.value)
+
+    def test_both_home_shows_combined_home_line(self):
+        embed = build_this_week_embed(
+            MONDAY, [], [], NOW, personal_name="Peyton", partner_name="Joe"
+        )
+
+        monday_field = next(f for f in embed.fields if f.name == "Monday, Jul 20")
+        self.assertIn("🏠 Peyton & Joe", monday_field.value)
+
+    def test_both_office_shows_combined_office_line(self):
+        events = [_all_day_event("Peyton office day", MONDAY), _all_day_event("Joe office day", MONDAY)]
+
+        embed = build_this_week_embed(
+            MONDAY, events, [], NOW, personal_name="Peyton", partner_name="Joe"
+        )
+
+        monday_field = next(f for f in embed.fields if f.name == "Monday, Jul 20")
+        self.assertIn("🏢 Peyton & Joe", monday_field.value)
+
+    def test_mixed_status_shows_each_person_on_their_own_line(self):
+        events = [_all_day_event("Peyton office day", MONDAY)]
+
+        embed = build_this_week_embed(
+            MONDAY, events, [], NOW, personal_name="Peyton", partner_name="Joe"
+        )
+
+        monday_field = next(f for f in embed.fields if f.name == "Monday, Jul 20")
+        self.assertIn("🏢 Peyton", monday_field.value)
+        self.assertIn("🏠 Joe", monday_field.value)
+
+    def test_office_day_marker_event_is_not_shown_as_a_regular_event(self):
+        events = [_all_day_event("Peyton office day", MONDAY)]
+
+        embed = build_this_week_embed(
+            MONDAY, events, [], NOW, personal_name="Peyton", partner_name="Joe"
+        )
+
+        monday_field = next(f for f in embed.fields if f.name == "Monday, Jul 20")
+        self.assertNotIn("**Peyton office day**", monday_field.value)
+
+    def test_nothing_scheduled_still_shows_alongside_office_status(self):
+        embed = build_this_week_embed(
+            MONDAY, [], [], NOW, personal_name="Peyton", partner_name="Joe"
+        )
+
+        monday_field = next(f for f in embed.fields if f.name == "Monday, Jul 20")
+        self.assertIn("Nothing scheduled", monday_field.value)
+
+    def test_regular_events_still_show_alongside_office_status(self):
+        events = [
+            _all_day_event("Peyton office day", MONDAY),
+            _timed_event("Vet Appointment", MONDAY, 9),
+        ]
+
+        embed = build_this_week_embed(
+            MONDAY, events, [], NOW, personal_name="Peyton", partner_name="Joe"
+        )
+
+        monday_field = next(f for f in embed.fields if f.name == "Monday, Jul 20")
+        self.assertIn("🏢 Peyton", monday_field.value)
+        self.assertIn("Vet Appointment", monday_field.value)
 
 
 if __name__ == "__main__":

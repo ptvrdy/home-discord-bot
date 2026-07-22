@@ -19,6 +19,7 @@ from services.schedule import (
     format_day_label,
     format_time,
     get_week_start,
+    office_days_in_week,
     parse_task_request,
     resolve_day,
 )
@@ -28,6 +29,21 @@ from services.this_week_embed import build_this_week_embed
 THIS_WEEK_MESSAGE_STATE_KEY = "this_week_message_id"
 THIS_WEEK_REFRESH_TIME = time(6, 0, tzinfo=HOUSEHOLD_TZ)
 DEFAULT_TASK_DURATION_MINUTES = 30
+
+
+def _household_names() -> list[str]:
+    """Names configured via PERSONAL_NAME/PARTNER_NAME - kept out of the
+    public repo (unlike the generic PERSONAL/PARTNER calendar labels) since
+    they're only used locally to match "<name> office day" calendar events
+    and label the #this-week office/home status line."""
+    return [name for name in (os.getenv("PERSONAL_NAME"), os.getenv("PARTNER_NAME")) if name]
+
+
+def _office_days_this_week(events: list[dict], week_start) -> set:
+    names = _household_names()
+    if not names:
+        return set()
+    return office_days_in_week(events, week_start, names)
 
 
 async def refresh_this_week(bot: commands.Bot) -> None:
@@ -53,7 +69,15 @@ async def refresh_this_week(bot: commands.Bot) -> None:
         calendar_error = str(error)
 
     chores = get_all_chores()
-    embed = build_this_week_embed(monday, events, chores, now, calendar_error=calendar_error)
+    embed = build_this_week_embed(
+        monday,
+        events,
+        chores,
+        now,
+        calendar_error=calendar_error,
+        personal_name=os.getenv("PERSONAL_NAME"),
+        partner_name=os.getenv("PARTNER_NAME"),
+    )
 
     message_id = get_state(THIS_WEEK_MESSAGE_STATE_KEY)
     if message_id:
@@ -97,6 +121,21 @@ class RequesterOnlyView(discord.ui.View):
         return True
 
 
+class CancelButton(discord.ui.Button):
+    """A graceful way out of a /task or /week proposal - nothing gets added
+    to the calendar, and the message stops offering choices."""
+
+    def __init__(self, task_name: str):
+        super().__init__(label="Cancel", style=discord.ButtonStyle.danger)
+        self.task_name = task_name
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.edit_message(
+            content=f"❌ Cancelled — nothing was added to the calendar for **{self.task_name}**.",
+            view=None,
+        )
+
+
 class TaskAlternativeButton(discord.ui.Button):
     def __init__(self, task_name: str, start: datetime, end: datetime):
         super().__init__(label=f"{start.strftime('%a')} {format_time(start)}", style=discord.ButtonStyle.primary)
@@ -129,6 +168,7 @@ class TaskAlternativesView(RequesterOnlyView):
         super().__init__(requester_id)
         for start, end in alternatives:
             self.add_item(TaskAlternativeButton(task_name, start, end))
+        self.add_item(CancelButton(task_name))
 
 
 class TaskSlotView(RequesterOnlyView):
@@ -147,6 +187,7 @@ class TaskSlotView(RequesterOnlyView):
         self.end = end
         self.day = day
         self.week_start = week_start
+        self.add_item(CancelButton(task_name))
 
     @discord.ui.button(label="Confirm", style=discord.ButtonStyle.success)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -189,6 +230,8 @@ class TaskSlotView(RequesterOnlyView):
             day=self.day,
             count=3,
             exclude=(self.start, self.end),
+            now=datetime.now(HOUSEHOLD_TZ),
+            office_days=_office_days_this_week(events, self.week_start),
         )
         if not alternatives:
             await interaction.edit_original_response(
@@ -301,7 +344,8 @@ class Schedule(commands.Cog):
 
         await interaction.response.defer()
 
-        today = datetime.now(HOUSEHOLD_TZ).date()
+        now = datetime.now(HOUSEHOLD_TZ)
+        today = now.date()
         week_start = get_week_start(today)
         day = resolve_day(parsed["day"], today)
 
@@ -328,7 +372,16 @@ class Schedule(commands.Cog):
             await interaction.followup.send(f"❌ I couldn't check the calendar: {error}")
             return
 
-        slots = find_slots(events, week_start, DEFAULT_TASK_DURATION_MINUTES, HOUSEHOLD_TZ, day=day, count=1)
+        slots = find_slots(
+            events,
+            week_start,
+            DEFAULT_TASK_DURATION_MINUTES,
+            HOUSEHOLD_TZ,
+            day=day,
+            count=1,
+            now=now,
+            office_days=_office_days_this_week(events, week_start),
+        )
         if not slots:
             scope = format_day_label(day) if day else "this week"
             await interaction.followup.send(
@@ -391,8 +444,8 @@ class Schedule(commands.Cog):
 
         await interaction.response.defer()
 
-        today = datetime.now(HOUSEHOLD_TZ).date()
-        week_start = get_week_start(today)
+        now = datetime.now(HOUSEHOLD_TZ)
+        week_start = get_week_start(now.date())
 
         try:
             events = get_week_events(week_start)
@@ -400,23 +453,32 @@ class Schedule(commands.Cog):
             await interaction.followup.send(f"❌ I couldn't check the calendar: {error}")
             return
 
-        held: list[tuple[datetime, datetime]] = []
-        for name in task_names:
-            slots = find_slots(
-                events, week_start, DEFAULT_TASK_DURATION_MINUTES, HOUSEHOLD_TZ, count=1, extra_busy=held
-            )
-            if not slots:
-                await interaction.followup.send(f"❌ I couldn't find a free slot for **{name}** this week.")
-                continue
+        # One call for the whole batch: find_slots spreads results across
+        # different days by itself (see services/schedule.py), so tasks in
+        # this batch naturally land on different days instead of clustering
+        # into the same afternoon, and can never collide with each other
+        # even before any of them are confirmed.
+        slots = find_slots(
+            events,
+            week_start,
+            DEFAULT_TASK_DURATION_MINUTES,
+            HOUSEHOLD_TZ,
+            count=len(task_names),
+            now=now,
+            office_days=_office_days_this_week(events, week_start),
+        )
 
-            start, end = slots[0]
-            held.append((start, end))
+        for name, slot in zip(task_names, slots):
+            start, end = slot
             view = TaskSlotView(name, start, end, None, interaction.user.id, week_start)
             await interaction.followup.send(
                 f"📌 Proposed for **{name}**: {format_day_label(start.date())} at "
                 f"{format_time(start)}–{format_time(end)}. Confirm?",
                 view=view,
             )
+
+        for name in task_names[len(slots):]:
+            await interaction.followup.send(f"❌ I couldn't find a free slot for **{name}** this week.")
 
 
 async def setup(bot):

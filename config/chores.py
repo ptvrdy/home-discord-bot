@@ -22,8 +22,4 @@ DEFAULT_CHORES = [
     ("Clean oven", 75),
     ("Vacuum behind furniture", 105),
     ("Wipe baseboards", 75),
-    ("Clean microwave", 21),
-    ("Litter box full clean", 60),
-    ("Clean oven", 75),
-    ("Vacuum behind furniture", 105),
 ]

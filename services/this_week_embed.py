@@ -8,11 +8,13 @@ from datetime import date, datetime, time, timedelta
 import discord
 
 from services.chores import chores_due_soon, is_overdue
-from services.schedule import format_event_sources, format_time
+from services.schedule import format_event_sources, format_time, is_office_day, office_event_name
 
 SCHEDULE_COLOR = 0x2E6F40
 DAY_FIELD_LIMIT = 1024
 CHORE_FIELD_LIMIT = 1024
+OFFICE_EMOJI = "🏢"
+HOME_EMOJI = "🏠"
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -37,12 +39,30 @@ def _format_event_line(event: dict) -> str:
     return f"{label} — **{name}** {format_event_sources(event['sources'])}"
 
 
+def _office_status_line(events: list[dict], day: date, personal_name: str, partner_name: str) -> str:
+    personal_office = is_office_day(events, day, personal_name)
+    partner_office = is_office_day(events, day, partner_name)
+
+    if personal_office and partner_office:
+        return f"{OFFICE_EMOJI} {personal_name} & {partner_name}"
+    if not personal_office and not partner_office:
+        return f"{HOME_EMOJI} {personal_name} & {partner_name}"
+
+    lines = [
+        f"{OFFICE_EMOJI if personal_office else HOME_EMOJI} {personal_name}",
+        f"{OFFICE_EMOJI if partner_office else HOME_EMOJI} {partner_name}",
+    ]
+    return "\n".join(lines)
+
+
 def build_this_week_embed(
     monday: date,
     events: list[dict],
     chores: list[dict],
     now: datetime,
     calendar_error: str | None = None,
+    personal_name: str | None = None,
+    partner_name: str | None = None,
 ) -> discord.Embed:
     sunday = monday + timedelta(days=6)
     embed = discord.Embed(
@@ -50,18 +70,32 @@ def build_this_week_embed(
         color=SCHEDULE_COLOR,
     )
 
+    show_office_status = bool(personal_name and partner_name)
+    office_event_names = (
+        {office_event_name(personal_name).lower(), office_event_name(partner_name).lower()}
+        if show_office_status
+        else set()
+    )
+
     events_by_day: dict[date, list[dict]] = {monday + timedelta(days=i): [] for i in range(7)}
     for event in events:
+        if event["name"].strip().lower() in office_event_names:
+            continue  # shown via the office/home status line instead
         day = _event_day(event)
         if day in events_by_day:
             events_by_day[day].append(event)
 
     for day, day_events in events_by_day.items():
+        parts = []
+        if show_office_status:
+            parts.append(_office_status_line(events, day, personal_name, partner_name))
+
         if day_events:
-            lines = [_format_event_line(event) for event in sorted(day_events, key=_event_sort_key)]
-            value = _truncate("\n".join(lines), DAY_FIELD_LIMIT)
+            parts.append("\n".join(_format_event_line(event) for event in sorted(day_events, key=_event_sort_key)))
         else:
-            value = "_Nothing scheduled_"
+            parts.append("_Nothing scheduled_")
+
+        value = _truncate("\n\n".join(parts), DAY_FIELD_LIMIT)
         embed.add_field(name=day.strftime("%A, %b %d"), value=value, inline=False)
 
     overdue_chores = [chore for chore in chores if is_overdue(chore, now)]

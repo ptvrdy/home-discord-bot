@@ -13,6 +13,15 @@ SCHEDULING_WINDOW_START_HOUR = 9
 SCHEDULING_WINDOW_END_HOUR = 20
 SLOT_GRANULARITY_MINUTES = 30
 
+# On a day flagged as an office day for anyone in the household (see
+# office_days_in_week below), don't propose chore/task slots until this hour
+# instead of the normal SCHEDULING_WINDOW_START_HOUR - safest assumption when
+# we don't know exactly who's doing which task, since either person might not
+# be home during the day.
+OFFICE_DAY_WINDOW_START_HOUR = 17
+
+OFFICE_DAY_EVENT_SUFFIX = " office day"
+
 
 def get_week_start(reference: date) -> date:
     """Return the Monday of the week containing `reference` (week starts Monday)."""
@@ -73,6 +82,40 @@ def resolve_day(day_name: str | None, today: date) -> date | None:
     return week_start + timedelta(days=WEEKDAYS.index(day_name.lower()))
 
 
+def office_event_name(person_name: str) -> str:
+    """The event title convention this household uses to mark an office day,
+    e.g. "Peyton Office Day" for person_name="Peyton"."""
+    return f"{person_name}{OFFICE_DAY_EVENT_SUFFIX}"
+
+
+def _occurs_on(event: dict, day: date) -> bool:
+    if event["all_day"]:
+        # Google's all-day "end" date is exclusive, so a single-day event has
+        # start == day and end == day + 1.
+        return event["start"] <= day < event["end"]
+    return event["start"].date() == day
+
+
+def is_office_day(events: list[dict], day: date, person_name: str) -> bool:
+    """Whether `person_name` has an "<name> office day" event covering `day`."""
+    target = office_event_name(person_name).lower()
+    return any(
+        event["name"].strip().lower() == target and _occurs_on(event, day)
+        for event in events
+    )
+
+
+def office_days_in_week(events: list[dict], week_start: date, person_names: list[str]) -> set[date]:
+    """Days this week where at least one of `person_names` is marked as an
+    office day - used to keep task/chore proposals out of work hours."""
+    return {
+        week_start + timedelta(days=i)
+        for i in range(7)
+        for name in person_names
+        if is_office_day(events, week_start + timedelta(days=i), name)
+    }
+
+
 def _busy_intervals(events: list[dict], household_tz) -> list[tuple[datetime, datetime]]:
     """Only timed events block scheduling - an all-day event (e.g. a
     birthday reminder) shouldn't prevent booking a timed task that day."""
@@ -87,6 +130,14 @@ def _overlaps(a_start, a_end, b_start, b_end) -> bool:
     return a_start < b_end and b_start < a_end
 
 
+def _round_up_to_granularity(moment: datetime, granularity_minutes: int) -> datetime:
+    moment = moment.replace(second=0, microsecond=0)
+    remainder = moment.minute % granularity_minutes
+    if remainder == 0:
+        return moment
+    return moment + timedelta(minutes=granularity_minutes - remainder)
+
+
 def candidate_slots(
     events: list[dict],
     week_start: date,
@@ -94,25 +145,40 @@ def candidate_slots(
     household_tz,
     day: date | None = None,
     extra_busy: list[tuple[datetime, datetime]] | None = None,
+    now: datetime | None = None,
+    office_days: set[date] | None = None,
 ):
     """Yield (start, end) aware-datetime candidate slots within the
     scheduling window, stepping by SLOT_GRANULARITY_MINUTES, skipping
     anything that overlaps an existing timed event (or an `extra_busy`
     interval - used to avoid double-booking multiple as-yet-unconfirmed
     proposals against each other). If `day` is given, only that day is
-    considered; otherwise walks Monday through Sunday of the given week."""
+    considered; otherwise walks Monday through Sunday of the given week.
+    If `now` is given, never yields a slot that starts before it - so
+    "somewhere this week" can't propose a time earlier today or on an
+    already-past day. If a day is in `office_days`, the window doesn't open
+    until OFFICE_DAY_WINDOW_START_HOUR instead of SCHEDULING_WINDOW_START_HOUR."""
     busy = _busy_intervals(events, household_tz) + (extra_busy or [])
     days = [day] if day else [week_start + timedelta(days=i) for i in range(7)]
 
     for current_day in days:
-        window_start = datetime.combine(
-            current_day, time(SCHEDULING_WINDOW_START_HOUR, 0), tzinfo=household_tz
+        start_hour = (
+            OFFICE_DAY_WINDOW_START_HOUR
+            if office_days and current_day in office_days
+            else SCHEDULING_WINDOW_START_HOUR
         )
+        window_start = datetime.combine(current_day, time(start_hour, 0), tzinfo=household_tz)
         window_end = datetime.combine(
             current_day, time(SCHEDULING_WINDOW_END_HOUR, 0), tzinfo=household_tz
         )
 
+        if now is not None and window_end <= now:
+            continue  # the whole day is already in the past
+
         slot_start = window_start
+        if now is not None and slot_start < now:
+            slot_start = _round_up_to_granularity(now, SLOT_GRANULARITY_MINUTES)
+
         while slot_start + timedelta(minutes=duration_minutes) <= window_end:
             slot_end = slot_start + timedelta(minutes=duration_minutes)
             if not any(_overlaps(slot_start, slot_end, b_start, b_end) for b_start, b_end in busy):
@@ -129,17 +195,63 @@ def find_slots(
     count: int = 1,
     extra_busy: list[tuple[datetime, datetime]] | None = None,
     exclude: tuple[datetime, datetime] | None = None,
+    now: datetime | None = None,
+    office_days: set[date] | None = None,
 ) -> list[tuple[datetime, datetime]]:
-    """Return up to `count` candidate slots, in chronological order, skipping
-    a slot exactly matching `exclude` (used by "Pick Different Time" to not
-    re-offer the slot that was just turned down)."""
-    results = []
-    for slot in candidate_slots(events, week_start, duration_minutes, household_tz, day=day, extra_busy=extra_busy):
+    """Return up to `count` candidate slots, skipping a slot exactly matching
+    `exclude` (used by "Pick Different Time" to not re-offer the slot that
+    was just turned down).
+
+    When a specific `day` was requested, or only one slot is needed, results
+    come back in plain chronological order. Otherwise (no day pinned, more
+    than one slot wanted) results are spread across different days first -
+    each day's earliest opening before any day's second, and so on - so a
+    batch of alternatives or a /week batch doesn't end up clustered into the
+    same afternoon."""
+    if day is not None or count <= 1:
+        results = []
+        for slot in candidate_slots(
+            events,
+            week_start,
+            duration_minutes,
+            household_tz,
+            day=day,
+            extra_busy=extra_busy,
+            now=now,
+            office_days=office_days,
+        ):
+            if exclude and slot == exclude:
+                continue
+            results.append(slot)
+            if len(results) >= count:
+                break
+        return results
+
+    by_day: dict[date, list[tuple[datetime, datetime]]] = {}
+    for slot in candidate_slots(
+        events,
+        week_start,
+        duration_minutes,
+        household_tz,
+        day=None,
+        extra_busy=extra_busy,
+        now=now,
+        office_days=office_days,
+    ):
         if exclude and slot == exclude:
             continue
-        results.append(slot)
-        if len(results) >= count:
-            break
+        by_day.setdefault(slot[0].date(), []).append(slot)
+
+    days_in_order = sorted(by_day.keys())
+    results = []
+    round_index = 0
+    while len(results) < count and any(round_index < len(by_day[d]) for d in days_in_order):
+        for d in days_in_order:
+            if round_index < len(by_day[d]):
+                results.append(by_day[d][round_index])
+                if len(results) >= count:
+                    break
+        round_index += 1
     return results
 
 

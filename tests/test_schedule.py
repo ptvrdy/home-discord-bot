@@ -9,7 +9,10 @@ from services.schedule import (
     format_event_sources,
     format_time,
     get_week_start,
+    is_office_day,
     normalize_event,
+    office_days_in_week,
+    office_event_name,
     parse_task_request,
     resolve_day,
 )
@@ -346,6 +349,38 @@ class CandidateSlotsTests(unittest.TestCase):
 
         self.assertEqual(slots, [])
 
+    def test_now_excludes_earlier_days_entirely(self):
+        # "now" is Wednesday - Monday and Tuesday should never be proposed.
+        wednesday = WEEK_START + timedelta(days=2)
+        now = datetime(2026, 7, 22, 10, 0, tzinfo=HOUSEHOLD_TZ)
+
+        slots = list(candidate_slots([], WEEK_START, 30, HOUSEHOLD_TZ, now=now))
+
+        days_seen = {start.date() for start, _ in slots}
+        self.assertNotIn(WEEK_START, days_seen)
+        self.assertNotIn(WEEK_START + timedelta(days=1), days_seen)
+        self.assertIn(wednesday, days_seen)
+
+    def test_now_excludes_earlier_times_today(self):
+        now = datetime(2026, 7, 20, 14, 5, tzinfo=HOUSEHOLD_TZ)
+
+        slots = list(candidate_slots([], WEEK_START, 30, HOUSEHOLD_TZ, day=WEEK_START, now=now))
+
+        for start, _ in slots:
+            self.assertGreaterEqual(start, now)
+
+    def test_now_rounds_up_to_the_next_slot_granularity(self):
+        now = datetime(2026, 7, 20, 14, 5, tzinfo=HOUSEHOLD_TZ)
+
+        slots = list(candidate_slots([], WEEK_START, 30, HOUSEHOLD_TZ, day=WEEK_START, now=now))
+
+        self.assertEqual(slots[0][0], datetime(2026, 7, 20, 14, 30, tzinfo=HOUSEHOLD_TZ))
+
+    def test_no_now_filter_behaves_as_before(self):
+        slots = list(candidate_slots([], WEEK_START, 30, HOUSEHOLD_TZ, day=WEEK_START, now=None))
+
+        self.assertEqual(slots[0][0], datetime(2026, 7, 20, 9, 0, tzinfo=HOUSEHOLD_TZ))
+
 
 class FindSlotsTests(unittest.TestCase):
     def test_returns_requested_count(self):
@@ -368,6 +403,135 @@ class FindSlotsTests(unittest.TestCase):
         slots = find_slots(busy, WEEK_START, 30, HOUSEHOLD_TZ, day=WEEK_START, count=1)
 
         self.assertEqual(slots, [])
+
+    def test_multiple_slots_with_no_day_spread_across_different_days(self):
+        slots = find_slots([], WEEK_START, 30, HOUSEHOLD_TZ, day=None, count=3)
+
+        days_seen = {start.date() for start, _ in slots}
+        # 3 alternatives across a fully-free week should land on 3 different days,
+        # not all clustered into Monday afternoon.
+        self.assertEqual(len(days_seen), 3)
+
+    def test_single_slot_with_no_day_still_picks_the_earliest(self):
+        slots = find_slots([], WEEK_START, 30, HOUSEHOLD_TZ, day=None, count=1)
+
+        self.assertEqual(slots[0][0], datetime(2026, 7, 20, 9, 0, tzinfo=HOUSEHOLD_TZ))
+
+    def test_day_spread_falls_back_to_repeating_days_once_exhausted(self):
+        # Only Monday and Tuesday have any availability - the 3rd and 4th
+        # alternatives must reuse those days rather than coming up empty.
+        busy = [
+            _timed_event_for_slots(WEEK_START + timedelta(days=i), 9, 0, 11 * 60)
+            for i in range(2, 7)
+        ]
+
+        slots = find_slots(busy, WEEK_START, 30, HOUSEHOLD_TZ, day=None, count=4)
+
+        self.assertEqual(len(slots), 4)
+        days_seen = {start.date() for start, _ in slots}
+        self.assertEqual(days_seen, {WEEK_START, WEEK_START + timedelta(days=1)})
+
+    def test_now_is_respected_when_spreading_across_days(self):
+        now = datetime(2026, 7, 22, 10, 0, tzinfo=HOUSEHOLD_TZ)  # Wednesday
+
+        slots = find_slots([], WEEK_START, 30, HOUSEHOLD_TZ, day=None, count=3, now=now)
+
+        for start, _ in slots:
+            self.assertGreaterEqual(start.date(), WEEK_START + timedelta(days=2))
+
+
+def _office_event(person_name, day, num_days=1):
+    return {
+        "name": office_event_name(person_name),
+        "start": day,
+        "end": day + timedelta(days=num_days),
+        "all_day": True,
+        "sources": ["Family"],
+    }
+
+
+def _plain_event(name, day):
+    return {"name": name, "start": day, "end": day + timedelta(days=1), "all_day": True, "sources": ["Family"]}
+
+
+class OfficeEventNameTests(unittest.TestCase):
+    def test_builds_the_expected_title(self):
+        self.assertEqual(office_event_name("Peyton"), "Peyton office day")
+
+
+class IsOfficeDayTests(unittest.TestCase):
+    def test_true_when_matching_event_covers_the_day(self):
+        events = [_office_event("Peyton", WEEK_START)]
+
+        self.assertTrue(is_office_day(events, WEEK_START, "Peyton"))
+
+    def test_matches_case_insensitively(self):
+        events = [{"name": "PEYTON OFFICE DAY", "start": WEEK_START, "end": WEEK_START + timedelta(days=1), "all_day": True}]
+
+        self.assertTrue(is_office_day(events, WEEK_START, "Peyton"))
+
+    def test_false_for_a_different_day(self):
+        events = [_office_event("Peyton", WEEK_START)]
+
+        self.assertFalse(is_office_day(events, WEEK_START + timedelta(days=1), "Peyton"))
+
+    def test_false_for_a_different_person(self):
+        events = [_office_event("Peyton", WEEK_START)]
+
+        self.assertFalse(is_office_day(events, WEEK_START, "Joe"))
+
+    def test_ignores_unrelated_events(self):
+        events = [_plain_event("Vet Appointment", WEEK_START)]
+
+        self.assertFalse(is_office_day(events, WEEK_START, "Peyton"))
+
+    def test_true_for_a_multi_day_office_event(self):
+        events = [_office_event("Peyton", WEEK_START, num_days=3)]
+
+        self.assertTrue(is_office_day(events, WEEK_START + timedelta(days=2), "Peyton"))
+        self.assertFalse(is_office_day(events, WEEK_START + timedelta(days=3), "Peyton"))
+
+
+class OfficeDaysInWeekTests(unittest.TestCase):
+    def test_includes_days_for_any_listed_person(self):
+        events = [
+            _office_event("Peyton", WEEK_START),
+            _office_event("Joe", WEEK_START + timedelta(days=2)),
+        ]
+
+        result = office_days_in_week(events, WEEK_START, ["Peyton", "Joe"])
+
+        self.assertEqual(result, {WEEK_START, WEEK_START + timedelta(days=2)})
+
+    def test_empty_when_nobody_has_an_office_day(self):
+        result = office_days_in_week([], WEEK_START, ["Peyton", "Joe"])
+
+        self.assertEqual(result, set())
+
+
+class OfficeDayWindowNarrowingTests(unittest.TestCase):
+    def test_no_slots_before_5pm_on_an_office_day(self):
+        slots = list(
+            candidate_slots([], WEEK_START, 30, HOUSEHOLD_TZ, day=WEEK_START, office_days={WEEK_START})
+        )
+
+        for start, _ in slots:
+            self.assertGreaterEqual(start.time(), time(17, 0))
+
+    def test_normal_9am_start_on_a_non_office_day(self):
+        other_day = WEEK_START + timedelta(days=1)
+        slots = list(
+            candidate_slots([], WEEK_START, 30, HOUSEHOLD_TZ, day=other_day, office_days={WEEK_START})
+        )
+
+        self.assertEqual(slots[0][0].time(), time(9, 0))
+
+    def test_find_slots_also_respects_office_days(self):
+        slots = find_slots(
+            [], WEEK_START, 30, HOUSEHOLD_TZ, day=WEEK_START, count=1, office_days={WEEK_START}
+        )
+
+        self.assertGreaterEqual(slots[0][0].time(), time(17, 0))
 
 
 if __name__ == "__main__":

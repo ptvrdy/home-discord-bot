@@ -121,6 +121,15 @@ same one edited in place. It shows:
 - The current week (Monday–Sunday), one field per day, with every event from every
   configured Google Calendar — deduplicated across calendars and tagged with which
   calendar(s) it came from (e.g. `📅 Personal · Family`).
+- If `PERSONAL_NAME` and `PARTNER_NAME` are both set, an office/home status line at
+  the top of each day: 🏢 for whoever's in the office that day, 🏠 for whoever's
+  home, combined onto one line when you're both in the same state (e.g.
+  `🏠 YourName & PartnerName`) or split onto two lines when you're not. Driven
+  entirely by all-day calendar events named `"<name> office day"`
+  (case-insensitive, matched against whatever `PERSONAL_NAME`/`PARTNER_NAME` are
+  set to) — put them on whichever calendar you like, they're matched by name only,
+  and don't show up in the regular event list since the status line
+  already covers them. With neither name set, this line doesn't appear at all.
 - Chore status — anything overdue, and anything coming due within the next few days.
 
 Run **`/refresh_this_week`** any time to rebuild it immediately instead of waiting
@@ -160,6 +169,18 @@ commands are confined to that channel; otherwise they work anywhere.
   is configured if Family isn't set), overridable via `TASK_CALENDAR_ID` in `.env`.
 - Default task duration is a fixed 30 minutes — there's no per-task duration input
   yet.
+- Slot proposals never land in the past — "somewhere this week" only considers the
+  current moment onward, never earlier today or an already-past day.
+- When no specific day is requested and more than one slot is being proposed (the
+  3 "Pick Different Time" alternatives, or multiple `/week` tasks in one call),
+  results are spread across different days first rather than clustering into the
+  same afternoon.
+- Every proposal has a **Cancel** button alongside Confirm / Pick Different Time —
+  a graceful way to back out without adding anything to the calendar.
+- On any day flagged as an office day for either person (see the `#this-week`
+  section above for how those are detected), proposals don't start until 5pm
+  instead of 9am — the assumption being that either of you might not be home
+  during the day, so it's safer to default chores/tasks to after work.
 
 ## Google Calendar setup
 
@@ -310,6 +331,8 @@ tests/                       Unit tests (unittest) for the services above
    THIS_WEEK_CHANNEL_ID=123456789012345678                   # optional, enables #this-week
    SCHEDULE_BUILDER_CHANNEL_ID=123456789012345678             # optional, confines /task + /week to one channel
    TASK_CALENDAR_ID=abc123@group.calendar.google.com          # optional, defaults to the Family calendar
+   PERSONAL_NAME=YourName                                     # optional, enables office/home status - see #this-week
+   PARTNER_NAME=PartnerName                                   # optional, enables office/home status - see #this-week
    ```
    `RECIPE_FORUM_ID` is the channel ID of your Discord **forum channel** where
    recipes get posted. The bot needs forum tags matching your logical tags
@@ -351,6 +374,11 @@ second.
 - Household hub — ✅ chore tracking (`/done`, nudges), ✅ Google Calendar
   credentials/access (`/check_calendar_setup`), ✅ reading + deduplicating events
   across all 4 calendars, ✅ the daily `#this-week` summary embed, ✅ `/task` and
-  `/week` scheduling flows. All originally-scoped pieces are built; possible next
-  steps if useful later: per-task duration instead of a fixed 30 minutes, editing
-  or cancelling an already-confirmed task/event from Discord
+  `/week` scheduling flows (including a Cancel button on every proposal), ✅
+  office-day-aware scheduling (5pm-only proposals on a day either person is
+  marked in-office, plus an office/home status line on `#this-week`). All
+  originally-scoped pieces are built; possible next steps if useful later:
+  - Per-task duration instead of a fixed 30 minutes; editing or cancelling an
+    already-confirmed task/event from Discord (not just an unconfirmed proposal)
+  - Mark a one-off `/task`/`/week` item as actually completed via a ✅ reaction on
+    its confirmation message, separate from the recurring-chore `/done` system
