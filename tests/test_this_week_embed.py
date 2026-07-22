@@ -192,7 +192,7 @@ class BuildThisWeekEmbedTests(unittest.TestCase):
         monday_field = next(f for f in embed.fields if f.name == "Monday, Jul 20")
         self.assertIn("🏢 Peyton & Joe", monday_field.value)
 
-    def test_mixed_status_shows_each_person_on_their_own_line(self):
+    def test_mixed_status_shows_both_people_on_the_same_line(self):
         events = [_all_day_event("Peyton office day", MONDAY)]
 
         embed = build_this_week_embed(
@@ -202,6 +202,9 @@ class BuildThisWeekEmbedTests(unittest.TestCase):
         monday_field = next(f for f in embed.fields if f.name == "Monday, Jul 20")
         self.assertIn("🏢 Peyton", monday_field.value)
         self.assertIn("🏠 Joe", monday_field.value)
+        status_line = monday_field.value.splitlines()[0]
+        self.assertIn("🏢 Peyton", status_line)
+        self.assertIn("🏠 Joe", status_line)
 
     def test_office_day_marker_event_is_not_shown_as_a_regular_event(self):
         events = [_all_day_event("Peyton office day", MONDAY)]
@@ -234,6 +237,19 @@ class BuildThisWeekEmbedTests(unittest.TestCase):
         monday_field = next(f for f in embed.fields if f.name == "Monday, Jul 20")
         self.assertIn("🏢 Peyton", monday_field.value)
         self.assertIn("Vet Appointment", monday_field.value)
+
+    def test_no_blank_line_between_office_status_and_events(self):
+        events = [
+            _all_day_event("Peyton office day", MONDAY),
+            _timed_event("Vet Appointment", MONDAY, 9),
+        ]
+
+        embed = build_this_week_embed(
+            MONDAY, events, [], NOW, personal_name="Peyton", partner_name="Joe"
+        )
+
+        monday_field = next(f for f in embed.fields if f.name == "Monday, Jul 20")
+        self.assertNotIn("\n\n", monday_field.value)
 
 
 if __name__ == "__main__":

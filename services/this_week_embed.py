@@ -48,11 +48,11 @@ def _office_status_line(events: list[dict], day: date, personal_name: str, partn
     if not personal_office and not partner_office:
         return f"{HOME_EMOJI} {personal_name} & {partner_name}"
 
-    lines = [
+    parts = [
         f"{OFFICE_EMOJI if personal_office else HOME_EMOJI} {personal_name}",
         f"{OFFICE_EMOJI if partner_office else HOME_EMOJI} {partner_name}",
     ]
-    return "\n".join(lines)
+    return "  ".join(parts)
 
 
 def build_this_week_embed(
@@ -95,7 +95,7 @@ def build_this_week_embed(
         else:
             parts.append("_Nothing scheduled_")
 
-        value = _truncate("\n\n".join(parts), DAY_FIELD_LIMIT)
+        value = _truncate("\n".join(parts), DAY_FIELD_LIMIT)
         embed.add_field(name=day.strftime("%A, %b %d"), value=value, inline=False)
 
     overdue_chores = [chore for chore in chores if is_overdue(chore, now)]

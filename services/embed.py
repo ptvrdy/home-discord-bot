@@ -191,7 +191,7 @@ HELP_SECTIONS = [
     ),
     (
         "🧹 Household Chores",
-        [("/done <chore>", "Mark a chore as completed. Add someone to attribute it to them instead of yourself.")],
+        [("/done <chore>", "Mark a chore as completed. Add someone to attribute it to them, or a days_ago to backdate it.")],
     ),
     (
         "📅 Schedule",

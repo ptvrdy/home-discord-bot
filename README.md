@@ -102,7 +102,9 @@ else). Each chore has a nudge threshold in days and remembers who last did it an
 - **`/done <chore>`** — marks a chore completed under whichever Discord user ran
   the command, or under someone else if you pass `completed_by`. Autocomplete
   helps you pick the exact chore name. Doing a chore also clears any pending
-  overdue reminder for it.
+  overdue reminder for it. Pass `days_ago` to backdate it (e.g. `days_ago: 3`
+  for "3 days ago") instead of logging it as just now — handy for entering
+  chore history after setting up a new install.
 - **Automatic nudges** — a background task checks every chore at 9am and 5pm
   (household timezone) and posts to `#nudges` (set via `NUDGES_CHANNEL_ID`) the
   first time a chore crosses its threshold, mentioning who last did it and how

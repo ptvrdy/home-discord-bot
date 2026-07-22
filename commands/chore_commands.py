@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import discord
@@ -73,6 +73,7 @@ class Chores(commands.Cog):
     @app_commands.describe(
         chore="Which chore you completed",
         completed_by="Optional: attribute this to someone else instead of yourself",
+        days_ago="Optional: backdate this (e.g. 3 for \"3 days ago\") instead of just now",
     )
     @app_commands.autocomplete(chore=chore_name_autocomplete)
     async def done(
@@ -80,10 +81,11 @@ class Chores(commands.Cog):
         interaction: discord.Interaction,
         chore: str,
         completed_by: discord.Member | None = None,
+        days_ago: app_commands.Range[int, 0, 3650] = 0,
     ):
         member = completed_by or interaction.user
-        now = datetime.now(HOUSEHOLD_TZ)
-        updated = mark_chore_done(chore, member.display_name, now)
+        done_at = datetime.now(HOUSEHOLD_TZ) - timedelta(days=days_ago)
+        updated = mark_chore_done(chore, member.display_name, done_at)
 
         if updated is None:
             await interaction.response.send_message(
@@ -93,8 +95,9 @@ class Chores(commands.Cog):
             )
             return
 
+        when = f"{days_ago} day{'s' if days_ago != 1 else ''} ago" if days_ago else "just now"
         await interaction.response.send_message(
-            f"✅ **{updated['name']}** marked done by {member.display_name}."
+            f"✅ **{updated['name']}** marked done by {member.display_name} ({when})."
         )
 
 

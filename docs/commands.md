@@ -45,7 +45,7 @@ from `#general` or anywhere else.
 
 | Command | What it does |
 |---|---|
-| `/done <chore>` | Mark a chore as completed (autocomplete search by name). Optionally attribute it to someone else instead of yourself. Chore reminders post automatically in #nudges at 9am and 5pm once a chore passes its threshold. |
+| `/done <chore>` | Mark a chore as completed (autocomplete search by name). Optionally attribute it to someone else instead of yourself, or backdate it with `days_ago` (e.g. 3 for "3 days ago"). Chore reminders post automatically in #nudges at 9am and 5pm once a chore passes its threshold. |
 
 ## 📅 Schedule
 
