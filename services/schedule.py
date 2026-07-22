@@ -1,12 +1,146 @@
-"""Pure calendar-event logic: date math, cross-calendar deduplication, and
-display formatting. No Google API calls, no Discord - easy to unit test."""
+"""Pure calendar-event logic: date math, cross-calendar deduplication,
+free-slot finding, and display formatting. No Google API calls, no Discord -
+easy to unit test."""
 
-from datetime import date, datetime, timedelta
+import re
+from datetime import date, datetime, time, timedelta
+
+
+WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
+# Only propose slots inside this window, per the household's scheduling spec.
+SCHEDULING_WINDOW_START_HOUR = 9
+SCHEDULING_WINDOW_END_HOUR = 20
+SLOT_GRANULARITY_MINUTES = 30
 
 
 def get_week_start(reference: date) -> date:
     """Return the Monday of the week containing `reference` (week starts Monday)."""
     return reference - timedelta(days=reference.weekday())
+
+
+def format_time(moment: datetime) -> str:
+    """Format a time portably (avoids strftime's platform-specific no-pad
+    flags, e.g. %-I isn't available on Windows)."""
+    hour = moment.hour % 12 or 12
+    period = "AM" if moment.hour < 12 else "PM"
+    return f"{hour}:{moment.minute:02d} {period}"
+
+
+def format_day_label(day: date) -> str:
+    """E.g. "Thursday, Jul 24"."""
+    return day.strftime("%A, %b %d")
+
+
+def parse_task_request(text: str) -> dict:
+    """Parse the free text after /task into {"name", "day", "time"}.
+
+    Recognizes an optional trailing weekday name, optionally followed by
+    "at H(:MM)am/pm":
+      "call vet"                 -> {"name": "call vet", "day": None, "time": None}
+      "call vet thursday"        -> {"name": "call vet", "day": "thursday", "time": None}
+      "call vet thursday at 5pm" -> {"name": "call vet", "day": "thursday", "time": time(17, 0)}
+    """
+    remaining = text.strip()
+
+    time_match = re.search(
+        r"\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*$", remaining, re.IGNORECASE
+    )
+    parsed_time = None
+    if time_match:
+        hour = int(time_match.group(1)) % 12
+        minute = int(time_match.group(2) or 0)
+        if time_match.group(3).lower() == "pm":
+            hour += 12
+        parsed_time = time(hour, minute)
+        remaining = remaining[: time_match.start()]
+
+    day_match = re.search(r"\s+(" + "|".join(WEEKDAYS) + r")\s*$", remaining, re.IGNORECASE)
+    day = None
+    if day_match:
+        day = day_match.group(1).lower()
+        remaining = remaining[: day_match.start()]
+
+    return {"name": remaining.strip(), "day": day, "time": parsed_time}
+
+
+def resolve_day(day_name: str | None, today: date) -> date | None:
+    """Map a weekday name to its date within the week containing `today`
+    (week starts Monday). Returns None if no day name was given."""
+    if day_name is None:
+        return None
+    week_start = get_week_start(today)
+    return week_start + timedelta(days=WEEKDAYS.index(day_name.lower()))
+
+
+def _busy_intervals(events: list[dict], household_tz) -> list[tuple[datetime, datetime]]:
+    """Only timed events block scheduling - an all-day event (e.g. a
+    birthday reminder) shouldn't prevent booking a timed task that day."""
+    return [
+        (event["start"].astimezone(household_tz), event["end"].astimezone(household_tz))
+        for event in events
+        if not event["all_day"]
+    ]
+
+
+def _overlaps(a_start, a_end, b_start, b_end) -> bool:
+    return a_start < b_end and b_start < a_end
+
+
+def candidate_slots(
+    events: list[dict],
+    week_start: date,
+    duration_minutes: int,
+    household_tz,
+    day: date | None = None,
+    extra_busy: list[tuple[datetime, datetime]] | None = None,
+):
+    """Yield (start, end) aware-datetime candidate slots within the
+    scheduling window, stepping by SLOT_GRANULARITY_MINUTES, skipping
+    anything that overlaps an existing timed event (or an `extra_busy`
+    interval - used to avoid double-booking multiple as-yet-unconfirmed
+    proposals against each other). If `day` is given, only that day is
+    considered; otherwise walks Monday through Sunday of the given week."""
+    busy = _busy_intervals(events, household_tz) + (extra_busy or [])
+    days = [day] if day else [week_start + timedelta(days=i) for i in range(7)]
+
+    for current_day in days:
+        window_start = datetime.combine(
+            current_day, time(SCHEDULING_WINDOW_START_HOUR, 0), tzinfo=household_tz
+        )
+        window_end = datetime.combine(
+            current_day, time(SCHEDULING_WINDOW_END_HOUR, 0), tzinfo=household_tz
+        )
+
+        slot_start = window_start
+        while slot_start + timedelta(minutes=duration_minutes) <= window_end:
+            slot_end = slot_start + timedelta(minutes=duration_minutes)
+            if not any(_overlaps(slot_start, slot_end, b_start, b_end) for b_start, b_end in busy):
+                yield (slot_start, slot_end)
+            slot_start += timedelta(minutes=SLOT_GRANULARITY_MINUTES)
+
+
+def find_slots(
+    events: list[dict],
+    week_start: date,
+    duration_minutes: int,
+    household_tz,
+    day: date | None = None,
+    count: int = 1,
+    extra_busy: list[tuple[datetime, datetime]] | None = None,
+    exclude: tuple[datetime, datetime] | None = None,
+) -> list[tuple[datetime, datetime]]:
+    """Return up to `count` candidate slots, in chronological order, skipping
+    a slot exactly matching `exclude` (used by "Pick Different Time" to not
+    re-offer the slot that was just turned down)."""
+    results = []
+    for slot in candidate_slots(events, week_start, duration_minutes, household_tz, day=day, extra_busy=extra_busy):
+        if exclude and slot == exclude:
+            continue
+        results.append(slot)
+        if len(results) >= count:
+            break
+    return results
 
 
 def _parse_event_time(value: dict):

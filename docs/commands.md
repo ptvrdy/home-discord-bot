@@ -51,6 +51,8 @@ from `#general` or anywhere else.
 
 | Command | What it does |
 |---|---|
+| `/task <request>` | Schedule a quick one-off task. `/task call vet` finds a free slot anywhere this week; `/task call vet thursday` finds a free slot that day; `/task call vet thursday at 5pm` skips the proposal and adds it straight to the calendar. Proposals show Confirm / Pick Different Time buttons — only the person who ran the command can respond. |
+| `/week` | Schedule up to 5 one-off tasks this week in one go — 5 separate text fields, each with autocomplete suggesting your real chore names as you type (you can still type anything). Proposes a free slot for each, each with its own Confirm / Pick Different Time buttons. |
 | `/refresh_this_week` | Manually rebuild the single #this-week schedule embed (events across every configured calendar, deduplicated, plus chore status) instead of waiting for the daily 6am refresh. |
 
 ## ⚙️ Admin

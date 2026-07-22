@@ -127,10 +127,39 @@ Run **`/refresh_this_week`** any time to rebuild it immediately instead of waiti
 for the next morning — handy right after setup, or after adding/removing a calendar.
 If a calendar can't be reached (not shared yet, bad ID), the embed still posts with
 an error field instead of failing silently — pair it with `/check_calendar_setup`
-to pin down which calendar needs attention.
+to pin down which calendar needs attention. Confirming a `/task` or `/week` proposal
+also triggers an immediate refresh, so newly-booked events show up right away.
 
-This is the first piece of a broader plan to fold in shared-calendar awareness and
-one-off task scheduling (`/week`, `/task`) — see Roadmap below.
+## Scheduling one-off tasks: /task and /week
+
+Recurring chores live in SQLite (see above); one-off action items live on the
+calendar instead, via **`/task`** and **`/week`**. Both only ever propose times
+inside a 9am–8pm window, and only the person who ran the command needs to confirm
+— no partner sign-off required. If `SCHEDULE_BUILDER_CHANNEL_ID` is set, both
+commands are confined to that channel; otherwise they work anywhere.
+
+- **`/task <request>`** — the exact text becomes the task name, with an optional
+  trailing day and time:
+  - `/task call vet` — finds a free 30-minute slot anywhere this week and proposes it.
+  - `/task call vet thursday` — finds a free slot specifically on Thursday.
+  - `/task call vet thursday at 5pm` — skips the proposal entirely and adds it
+    straight to the calendar at that exact time.
+  - A proposal shows **Confirm** and **Pick Different Time** buttons. Confirm adds
+    it to the calendar and refreshes `#this-week`; Pick Different Time replaces the
+    message with up to 3 alternative time buttons — clicking one books it directly.
+- **`/week`** — schedules up to 5 tasks at once via 5 separate text fields
+  (`task_1`...`task_5`, only the first is required). Each field autocompletes
+  against your real chore names as you type, but nothing stops you from typing
+  something else entirely — it's a convenience, not a restriction. `/week` (like
+  `/task`) doesn't touch the chores table at all: confirming a proposal only adds
+  a calendar event, it never marks a chore as done via `/done`. Each task gets its
+  own free-slot proposal and its own Confirm / Pick Different Time buttons, and
+  tasks within the same `/week` call won't be proposed the same slot as each
+  other even before any of them are confirmed.
+- New events go on the shared **Family** calendar by default (or whichever calendar
+  is configured if Family isn't set), overridable via `TASK_CALENDAR_ID` in `.env`.
+- Default task duration is a fixed 30 minutes — there's no per-task duration input
+  yet.
 
 ## Google Calendar setup
 
@@ -230,7 +259,7 @@ commands/
     recipe_commands.py     Recipe box slash commands + modals/views
     chore_commands.py      /done + the background nudge scheduler
     schedule_commands.py   Calendar diagnostics, the #this-week refresh loop, and
-                            eventually /task and /week
+                            the /task and /week scheduling flows
 
 models/
     recipe_card.py         Recipe dataclass — the shape every recipe takes regardless of source
@@ -245,7 +274,7 @@ services/
     grocery_list.py          OurGroceries integration
     chores.py                Pure chore-overdue logic (no Discord, no SQLite)
     google_calendar.py       Google Calendar service-account integration
-    schedule.py               Pure event date-math/dedup/formatting logic
+    schedule.py               Pure event date-math/dedup/free-slot-finding/formatting logic
     this_week_embed.py        Builds the #this-week embed layout
     image_layout.py          Decides thumbnail vs. full-size image based on aspect ratio
     time_parser.py           Parses "PT1H30M" / "2 hours" / "20" into minutes
@@ -279,6 +308,8 @@ tests/                       Unit tests (unittest) for the services above
    FAMILY_CALENDAR_ID=abc123@group.calendar.google.com       # optional, see below
    DISCORD_CALENDAR_ID=def456@group.calendar.google.com      # optional, see below
    THIS_WEEK_CHANNEL_ID=123456789012345678                   # optional, enables #this-week
+   SCHEDULE_BUILDER_CHANNEL_ID=123456789012345678             # optional, confines /task + /week to one channel
+   TASK_CALENDAR_ID=abc123@group.calendar.google.com          # optional, defaults to the Family calendar
    ```
    `RECIPE_FORUM_ID` is the channel ID of your Discord **forum channel** where
    recipes get posted. The bot needs forum tags matching your logical tags
@@ -317,8 +348,9 @@ second.
   `/find_ingredient`/`/random`, not shown as a forum tag chip)
 - `/recipe_history` or similar for recipes whose journal has grown past what fits
   in a single Discord embed
-- Household hub, in progress: ✅ chore tracking (`/done`, nudges), ✅ Google
-  Calendar credentials/access (`/check_calendar_setup`), ✅ reading + deduplicating
-  events across all 4 calendars, ✅ the daily `#this-week` summary embed; still to
-  come — `/task` and `/week` scheduling flows (free-slot finding, Confirm/Pick
-  Different Time buttons)
+- Household hub — ✅ chore tracking (`/done`, nudges), ✅ Google Calendar
+  credentials/access (`/check_calendar_setup`), ✅ reading + deduplicating events
+  across all 4 calendars, ✅ the daily `#this-week` summary embed, ✅ `/task` and
+  `/week` scheduling flows. All originally-scoped pieces are built; possible next
+  steps if useful later: per-task duration instead of a fixed 30 minutes, editing
+  or cancelling an already-confirmed task/event from Discord

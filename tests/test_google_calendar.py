@@ -4,6 +4,8 @@ from unittest.mock import MagicMock, patch
 
 from services.google_calendar import (
     check_calendar_access,
+    create_event,
+    default_write_calendar_id,
     get_configured_calendars,
     get_week_events,
     list_events,
@@ -162,6 +164,67 @@ class GetWeekEventsTests(unittest.TestCase):
 
         self.assertEqual(events, [])
         service.events.assert_not_called()
+
+
+class DefaultWriteCalendarIdTests(unittest.TestCase):
+    def test_prefers_explicit_override(self):
+        env = {"TASK_CALENDAR_ID": "override@example.com", "FAMILY_CALENDAR_ID": "fam@example.com"}
+        with patch.dict("os.environ", env, clear=True):
+            self.assertEqual(default_write_calendar_id(), "override@example.com")
+
+    def test_falls_back_to_family_calendar(self):
+        env = {"PERSONAL_CALENDAR_ID": "me@example.com", "FAMILY_CALENDAR_ID": "fam@example.com"}
+        with patch.dict("os.environ", env, clear=True):
+            self.assertEqual(default_write_calendar_id(), "fam@example.com")
+
+    def test_falls_back_to_whatever_is_configured_when_no_family_calendar(self):
+        env = {"PERSONAL_CALENDAR_ID": "me@example.com"}
+        with patch.dict("os.environ", env, clear=True):
+            self.assertEqual(default_write_calendar_id(), "me@example.com")
+
+    def test_raises_when_nothing_is_configured(self):
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaises(RuntimeError):
+                default_write_calendar_id()
+
+
+class CreateEventTests(unittest.TestCase):
+    def test_inserts_an_event_on_the_given_calendar(self):
+        service = MagicMock()
+        service.events().insert().execute.return_value = {"id": "abc123"}
+        start = datetime(2026, 7, 23, 17, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 7, 23, 17, 30, tzinfo=timezone.utc)
+
+        result = create_event("call vet", start, end, calendar_id="fam@example.com", service=service)
+
+        self.assertEqual(result, {"id": "abc123"})
+        service.events().insert.assert_any_call(
+            calendarId="fam@example.com",
+            body={
+                "summary": "call vet",
+                "start": {"dateTime": start.isoformat()},
+                "end": {"dateTime": end.isoformat()},
+            },
+        )
+
+    def test_uses_default_write_calendar_when_not_specified(self):
+        env = {"FAMILY_CALENDAR_ID": "fam@example.com"}
+        service = MagicMock()
+        service.events().insert().execute.return_value = {"id": "abc123"}
+        start = datetime(2026, 7, 23, 17, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 7, 23, 17, 30, tzinfo=timezone.utc)
+
+        with patch.dict("os.environ", env, clear=True):
+            create_event("call vet", start, end, service=service)
+
+        service.events().insert.assert_any_call(
+            calendarId="fam@example.com",
+            body={
+                "summary": "call vet",
+                "start": {"dateTime": start.isoformat()},
+                "end": {"dateTime": end.isoformat()},
+            },
+        )
 
 
 if __name__ == "__main__":

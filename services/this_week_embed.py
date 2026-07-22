@@ -8,7 +8,7 @@ from datetime import date, datetime, time, timedelta
 import discord
 
 from services.chores import chores_due_soon, is_overdue
-from services.schedule import format_event_sources
+from services.schedule import format_event_sources, format_time
 
 SCHEDULE_COLOR = 0x2E6F40
 DAY_FIELD_LIMIT = 1024
@@ -19,12 +19,6 @@ def _truncate(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 1] + "…"
-
-
-def _format_time(moment: datetime) -> str:
-    hour = moment.hour % 12 or 12
-    period = "AM" if moment.hour < 12 else "PM"
-    return f"{hour}:{moment.minute:02d} {period}"
 
 
 def _event_day(event: dict) -> date:
@@ -38,7 +32,7 @@ def _event_sort_key(event: dict):
 
 
 def _format_event_line(event: dict) -> str:
-    label = "All day" if event["all_day"] else _format_time(event["start"])
+    label = "All day" if event["all_day"] else format_time(event["start"])
     name = f"[{event['name']} ↗]({event['url']})" if event.get("url") else event["name"]
     return f"{label} — **{name}** {format_event_sources(event['sources'])}"
 

@@ -135,3 +135,39 @@ def get_week_events(monday: date, service=None) -> list[dict]:
             raw_events.append(normalize_event(item, label))
 
     return deduplicate_events(raw_events, source_order=list(CALENDAR_ENV_VARS.keys()))
+
+
+def default_write_calendar_id() -> str:
+    """Which calendar /task and /week write new events to: an explicit
+    TASK_CALENDAR_ID override if set, else the shared Family calendar, else
+    whichever calendar happens to be configured first."""
+    override = os.getenv("TASK_CALENDAR_ID")
+    if override:
+        return override
+
+    configured = get_configured_calendars()
+    if "Family" in configured:
+        return configured["Family"]
+    if configured:
+        return next(iter(configured.values()))
+
+    raise RuntimeError("No calendars configured - set at least one *_CALENDAR_ID in .env.")
+
+
+def create_event(
+    name: str,
+    start: datetime,
+    end: datetime,
+    calendar_id: str | None = None,
+    service=None,
+) -> dict:
+    """Create a timed event and return the raw API response. Defaults to
+    default_write_calendar_id() when no calendar is specified."""
+    service = service or get_service()
+    calendar_id = calendar_id or default_write_calendar_id()
+    body = {
+        "summary": name,
+        "start": {"dateTime": start.isoformat()},
+        "end": {"dateTime": end.isoformat()},
+    }
+    return service.events().insert(calendarId=calendar_id, body=body).execute()

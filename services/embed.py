@@ -195,7 +195,11 @@ HELP_SECTIONS = [
     ),
     (
         "📅 Schedule",
-        [("/refresh_this_week", "Manually rebuild the #this-week schedule embed instead of waiting for the daily refresh.")],
+        [
+            ("/task <request>", 'Schedule a quick one-off task, e.g. "call vet" or "call vet thursday at 5pm". Proposes a free slot for you to confirm, unless you gave an exact time.'),
+            ("/week", "Schedule up to 5 one-off tasks this week — autocomplete suggests your chores, but you can type anything. Proposes a free slot for each."),
+            ("/refresh_this_week", "Manually rebuild the #this-week schedule embed instead of waiting for the daily refresh."),
+        ],
     ),
     (
         "⚙️ Admin",
