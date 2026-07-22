@@ -29,18 +29,32 @@ from services.schedule import deduplicate_events, normalize_event
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
-# Label -> env var holding that calendar's ID. Personal/Partner are each
-# household member's own calendar; Family is the shared household calendar;
-# Discord is the separate calendar used to schedule gaming nights (Minecraft
-# Mondays, BG3, movie nights) for the friends' Discord server - not
-# household chores/tasks, but still useful to show alongside everything else
-# on #this-week.
-CALENDAR_ENV_VARS = {
-    "Personal": "PERSONAL_CALENDAR_ID",
-    "Partner": "PARTNER_CALENDAR_ID",
-    "Family": "FAMILY_CALENDAR_ID",
-    "Discord (Gaming)": "DISCORD_CALENDAR_ID",
-}
+# Env vars holding each calendar's ID, in display/priority order. Personal
+# and Partner are each household member's own calendar; Family is the shared
+# household calendar; Discord is the separate calendar used to schedule
+# gaming nights (Minecraft Mondays, BG3, movie nights) for the friends'
+# Discord server - not household chores/tasks, but still useful to show
+# alongside everything else on #this-week.
+CALENDAR_ENV_VARS_IN_ORDER = [
+    "PERSONAL_CALENDAR_ID",
+    "PARTNER_CALENDAR_ID",
+    "FAMILY_CALENDAR_ID",
+    "DISCORD_CALENDAR_ID",
+]
+
+
+def _calendar_label(env_var: str) -> str:
+    """The display label for a calendar. Personal/Partner use
+    PERSONAL_NAME/PARTNER_NAME if set - kept out of the public repo (unlike
+    this source file) since they're real names - falling back to the
+    generic "Personal"/"Partner" labels otherwise."""
+    if env_var == "PERSONAL_CALENDAR_ID":
+        return os.getenv("PERSONAL_NAME", "Personal")
+    if env_var == "PARTNER_CALENDAR_ID":
+        return os.getenv("PARTNER_NAME", "Partner")
+    if env_var == "FAMILY_CALENDAR_ID":
+        return "Family"
+    return "Discord (Gaming)"
 
 
 def _household_timezone():
@@ -73,7 +87,7 @@ def get_configured_calendars() -> dict[str, str]:
     have an ID set in .env - lets setup proceed incrementally rather than
     requiring all 4 at once."""
     calendars = {
-        label: os.getenv(env_var) for label, env_var in CALENDAR_ENV_VARS.items()
+        _calendar_label(env_var): os.getenv(env_var) for env_var in CALENDAR_ENV_VARS_IN_ORDER
     }
     return {label: calendar_id for label, calendar_id in calendars.items() if calendar_id}
 
@@ -134,7 +148,8 @@ def get_week_events(monday: date, service=None) -> list[dict]:
                 continue
             raw_events.append(normalize_event(item, label))
 
-    return deduplicate_events(raw_events, source_order=list(CALENDAR_ENV_VARS.keys()))
+    source_order = [_calendar_label(env_var) for env_var in CALENDAR_ENV_VARS_IN_ORDER]
+    return deduplicate_events(raw_events, source_order=source_order)
 
 
 def default_write_calendar_id() -> str:

@@ -25,6 +25,27 @@ class GetConfiguredCalendarsTests(unittest.TestCase):
         with patch.dict("os.environ", {}, clear=True):
             self.assertEqual(get_configured_calendars(), {})
 
+    def test_uses_personal_and_partner_name_overrides_when_set(self):
+        env = {
+            "PERSONAL_CALENDAR_ID": "me@example.com",
+            "PARTNER_CALENDAR_ID": "partner@example.com",
+            "PERSONAL_NAME": "Peyton",
+            "PARTNER_NAME": "Joe",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            self.assertEqual(
+                get_configured_calendars(),
+                {"Peyton": "me@example.com", "Joe": "partner@example.com"},
+            )
+
+    def test_falls_back_to_generic_labels_without_name_overrides(self):
+        env = {"PERSONAL_CALENDAR_ID": "me@example.com", "PARTNER_CALENDAR_ID": "partner@example.com"}
+        with patch.dict("os.environ", env, clear=True):
+            self.assertEqual(
+                get_configured_calendars(),
+                {"Personal": "me@example.com", "Partner": "partner@example.com"},
+            )
+
     def test_supports_all_four_configured_calendars(self):
         env = {
             "PERSONAL_CALENDAR_ID": "me@example.com",
