@@ -137,6 +137,7 @@ class RecipeEmbedTests(unittest.TestCase):
         self.assertIn("/meal_plan", fields["🛒 Grocery Shopping"])
         self.assertIn("/grocery_list", fields["🛒 Grocery Shopping"])
         self.assertIn("/done", fields["🧹 Household Chores"])
+        self.assertIn("/chore_stats", fields["🧹 Household Chores"])
         self.assertIn("/task", fields["📅 Schedule"])
         self.assertIn("/week", fields["📅 Schedule"])
         self.assertIn("/refresh_this_week", fields["📅 Schedule"])

@@ -6,7 +6,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from services.chores import chores_needing_nudge, format_nudge_message
+from services.chore_stats_embed import build_chore_stats_embed
+from services.chores import chore_stats, chores_needing_nudge, format_nudge_message
 from services.database import (
     get_all_chores,
     get_chore_names,
@@ -99,6 +100,15 @@ class Chores(commands.Cog):
         await interaction.response.send_message(
             f"✅ **{updated['name']}** marked done by {member.display_name} ({when})."
         )
+
+    @app_commands.command(
+        name="chore_stats",
+        description="See household chore stats: overdue, coming up, and who's been keeping up",
+    )
+    async def chore_stats_command(self, interaction: discord.Interaction):
+        now = datetime.now(HOUSEHOLD_TZ)
+        stats = chore_stats(get_all_chores(), now)
+        await interaction.response.send_message(embed=build_chore_stats_embed(stats))
 
 
 async def setup(bot):

@@ -264,12 +264,24 @@ def _parse_event_time(value: dict):
     return date.fromisoformat(value["date"])
 
 
-def normalize_event(raw_event: dict, source: str) -> dict:
+def normalize_event(raw_event: dict, source: str, household_tz=None) -> dict:
     """Convert a raw Google Calendar API event resource into the shape used
     throughout this module: parsed start/end, whether it's all-day, and
-    which calendar it came from."""
+    which calendar it came from.
+
+    Google returns timed events in UTC (a trailing "Z"), not the calendar's
+    configured display timezone - so without converting, a 9:30am event can
+    come back as an aware datetime that reads "13:30" and displays as 1:30pm.
+    Pass `household_tz` to convert timed events to household local time; day
+    grouping and display formatting both depend on this being correct, not
+    just the scheduling math (which already did its own conversion)."""
     start = _parse_event_time(raw_event["start"])
     end = _parse_event_time(raw_event["end"])
+    if household_tz is not None:
+        if isinstance(start, datetime):
+            start = start.astimezone(household_tz)
+        if isinstance(end, datetime):
+            end = end.astimezone(household_tz)
     return {
         "name": raw_event.get("summary") or "(untitled event)",
         "start": start,

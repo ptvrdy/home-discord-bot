@@ -51,6 +51,43 @@ def chores_needing_nudge(chores: list[dict], now: datetime) -> list[dict]:
     ]
 
 
+def chore_stats(chores: list[dict], now: datetime) -> dict:
+    """Aggregate the current chore board into household-wide stats: box size,
+    overdue/upcoming/never-done counts, the single most-overdue chore, and a
+    snapshot of who most recently completed each chore. This is a snapshot
+    of current state, not cumulative history - the chores table only tracks
+    each chore's *last* completion, not a full log of every time it's been
+    done, so this can't show lifetime totals or streaks."""
+    overdue = [chore for chore in chores if is_overdue(chore, now)]
+    upcoming = chores_due_soon(chores, now)
+    never_done = [chore for chore in chores if chore["last_done_at"] is None]
+
+    overdue_with_days_late = [
+        (chore, days_since(chore["last_done_at"], now) - chore["threshold_days"])
+        for chore in overdue
+        if chore["last_done_at"] is not None
+    ]
+    overdue_with_days_late.sort(key=lambda pair: pair[1], reverse=True)
+    worst_offender, worst_offender_days_late = (
+        overdue_with_days_late[0] if overdue_with_days_late else (None, None)
+    )
+
+    by_person: dict[str, int] = {}
+    for chore in chores:
+        if chore["last_done_by"]:
+            by_person[chore["last_done_by"]] = by_person.get(chore["last_done_by"], 0) + 1
+
+    return {
+        "total": len(chores),
+        "overdue_count": len(overdue),
+        "upcoming_count": len(upcoming),
+        "never_done_count": len(never_done),
+        "worst_offender": worst_offender,
+        "worst_offender_days_late": worst_offender_days_late,
+        "by_person": by_person,
+    }
+
+
 def format_nudge_message(chore: dict, now: datetime) -> str:
     """Render one overdue-chore reminder line for #nudges."""
     days = days_since(chore["last_done_at"], now)

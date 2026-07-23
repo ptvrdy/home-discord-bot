@@ -2,6 +2,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from services.chores import (
+    chore_stats,
     chores_due_soon,
     chores_needing_nudge,
     days_since,
@@ -142,6 +143,68 @@ class FormatNudgeMessageTests(unittest.TestCase):
 
         self.assertIn("1 day ago", message)
         self.assertNotIn("1 days ago", message)
+
+
+class ChoreStatsTests(unittest.TestCase):
+    def test_counts_total_overdue_upcoming_and_never_done(self):
+        chores = [
+            _chore(name="Mop", last_done_at=None),  # never done -> overdue
+            _chore(name="Clean oven", threshold_days=14, last_done_at=(NOW - timedelta(days=12)).isoformat()),  # upcoming
+            _chore(name="Vacuum", threshold_days=14, last_done_at=(NOW - timedelta(days=1)).isoformat()),  # fine
+        ]
+
+        stats = chore_stats(chores, NOW)
+
+        self.assertEqual(stats["total"], 3)
+        self.assertEqual(stats["overdue_count"], 1)
+        self.assertEqual(stats["upcoming_count"], 1)
+        self.assertEqual(stats["never_done_count"], 1)
+
+    def test_worst_offender_is_the_most_overdue_chore(self):
+        chores = [
+            _chore(name="Mop", threshold_days=14, last_done_at=(NOW - timedelta(days=20)).isoformat()),  # 6 days late
+            _chore(name="Clean oven", threshold_days=14, last_done_at=(NOW - timedelta(days=30)).isoformat()),  # 16 days late
+        ]
+
+        stats = chore_stats(chores, NOW)
+
+        self.assertEqual(stats["worst_offender"]["name"], "Clean oven")
+        self.assertEqual(stats["worst_offender_days_late"], 16)
+
+    def test_never_done_chores_excluded_from_worst_offender_ranking(self):
+        chores = [_chore(name="Mop", last_done_at=None)]
+
+        stats = chore_stats(chores, NOW)
+
+        self.assertIsNone(stats["worst_offender"])
+        self.assertIsNone(stats["worst_offender_days_late"])
+
+    def test_no_worst_offender_when_nothing_is_overdue(self):
+        chores = [_chore(name="Mop", threshold_days=14, last_done_at=(NOW - timedelta(days=1)).isoformat())]
+
+        stats = chore_stats(chores, NOW)
+
+        self.assertIsNone(stats["worst_offender"])
+
+    def test_by_person_counts_last_completions(self):
+        chores = [
+            _chore(name="Mop", last_done_by="Alex"),
+            _chore(name="Clean oven", last_done_by="Alex"),
+            _chore(name="Vacuum", last_done_by="Sam"),
+            _chore(name="Wash bed sheets", last_done_by=None),
+        ]
+
+        stats = chore_stats(chores, NOW)
+
+        self.assertEqual(stats["by_person"], {"Alex": 2, "Sam": 1})
+
+    def test_empty_chore_list(self):
+        stats = chore_stats([], NOW)
+
+        self.assertEqual(stats["total"], 0)
+        self.assertEqual(stats["overdue_count"], 0)
+        self.assertEqual(stats["by_person"], {})
+        self.assertIsNone(stats["worst_offender"])
 
 
 if __name__ == "__main__":

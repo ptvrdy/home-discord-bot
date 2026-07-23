@@ -146,7 +146,7 @@ def get_week_events(monday: date, service=None) -> list[dict]:
         for item in list_events(calendar_id, time_min, time_max, service=service):
             if item.get("status") == "cancelled":
                 continue
-            raw_events.append(normalize_event(item, label))
+            raw_events.append(normalize_event(item, label, household_tz=HOUSEHOLD_TZ))
 
     source_order = [_calendar_label(env_var) for env_var in CALENDAR_ENV_VARS_IN_ORDER]
     return deduplicate_events(raw_events, source_order=source_order)

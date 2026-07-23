@@ -105,6 +105,11 @@ else). Each chore has a nudge threshold in days and remembers who last did it an
   overdue reminder for it. Pass `days_ago` to backdate it (e.g. `days_ago: 3`
   for "3 days ago") instead of logging it as just now — handy for entering
   chore history after setting up a new install.
+- **`/chore_stats`** — chore board size, overdue/coming-up counts, the single
+  most overdue chore, and a snapshot of who most recently completed each chore.
+  This reflects current state only, not lifetime totals — the chores table
+  tracks each chore's last completion, not a full history of every time it's
+  been done.
 - **Automatic nudges** — a background task checks every chore at 9am and 5pm
   (household timezone) and posts to `#nudges` (set via `NUDGES_CHANNEL_ID`) the
   first time a chore crosses its threshold, mentioning who last did it and how
@@ -296,6 +301,7 @@ services/
     journal.py               Renders the cooking-log history into the journal embed
     grocery_list.py          OurGroceries integration
     chores.py                Pure chore-overdue logic (no Discord, no SQLite)
+    chore_stats_embed.py     Builds the /chore_stats embed
     google_calendar.py       Google Calendar service-account integration
     schedule.py               Pure event date-math/dedup/free-slot-finding/formatting logic
     this_week_embed.py        Builds the #this-week embed layout

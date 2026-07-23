@@ -60,6 +60,33 @@ class NormalizeEventTests(unittest.TestCase):
         self.assertEqual(event["start"], date(2026, 7, 25))
         self.assertNotIsInstance(event["start"], datetime)
 
+    def test_no_household_tz_leaves_the_original_offset_alone(self):
+        raw = {"start": {"dateTime": "2026-07-20T13:30:00Z"}, "end": {"dateTime": "2026-07-20T15:00:00Z"}}
+
+        event = normalize_event(raw, "Family")
+
+        self.assertEqual(event["start"].hour, 13)
+
+    def test_household_tz_converts_from_utc_to_local_hour(self):
+        # Google returns timed events in UTC (trailing "Z"), regardless of
+        # the calendar's own configured display timezone - 13:30 UTC is
+        # actually 9:30am in America/New_York (UTC-4 in summer).
+        raw = {"start": {"dateTime": "2026-07-20T13:30:00Z"}, "end": {"dateTime": "2026-07-20T15:00:00Z"}}
+        household_tz = timezone(timedelta(hours=-4))
+
+        event = normalize_event(raw, "Family", household_tz=household_tz)
+
+        self.assertEqual(event["start"], datetime(2026, 7, 20, 9, 30, tzinfo=household_tz))
+        self.assertEqual(event["end"], datetime(2026, 7, 20, 11, 0, tzinfo=household_tz))
+
+    def test_household_tz_does_not_affect_all_day_events(self):
+        raw = {"start": {"date": "2026-07-25"}, "end": {"date": "2026-07-26"}}
+        household_tz = timezone(timedelta(hours=-4))
+
+        event = normalize_event(raw, "Family", household_tz=household_tz)
+
+        self.assertEqual(event["start"], date(2026, 7, 25))
+
     def test_missing_summary_falls_back_to_placeholder(self):
         raw = {"start": {"date": "2026-07-25"}, "end": {"date": "2026-07-26"}}
 
