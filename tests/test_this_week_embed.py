@@ -238,6 +238,42 @@ class BuildThisWeekEmbedTests(unittest.TestCase):
         self.assertIn("🏢 Peyton", monday_field.value)
         self.assertIn("Vet Appointment", monday_field.value)
 
+    def test_trash_recycling_compost_line_shows_on_tuesday(self):
+        embed = build_this_week_embed(MONDAY, [], [], NOW)
+
+        tuesday_field = next(f for f in embed.fields if f.name == "Tuesday, Jul 21")
+        self.assertIn("🗑️", tuesday_field.value)
+        self.assertIn("♻️", tuesday_field.value)
+        self.assertIn("🌱", tuesday_field.value)
+
+    def test_large_items_line_shows_on_thursday_and_saturday(self):
+        embed = build_this_week_embed(MONDAY, [], [], NOW)
+
+        thursday_field = next(f for f in embed.fields if f.name == "Thursday, Jul 23")
+        saturday_field = next(f for f in embed.fields if f.name == "Saturday, Jul 25")
+        for field in (thursday_field, saturday_field):
+            self.assertIn("🗑️", field.value)
+            self.assertIn("🛋️", field.value)
+
+    def test_no_waste_line_on_days_without_pickup(self):
+        embed = build_this_week_embed(MONDAY, [], [], NOW)
+
+        for name in ("Monday, Jul 20", "Wednesday, Jul 22", "Friday, Jul 24", "Sunday, Jul 26"):
+            field = next(f for f in embed.fields if f.name == name)
+            self.assertNotIn("🗑️", field.value)
+
+    def test_waste_line_appears_alongside_office_status_and_events(self):
+        event = _timed_event("Trash reminder call", date(2026, 7, 21), 9)
+
+        embed = build_this_week_embed(
+            MONDAY, [event], [], NOW, personal_name="Peyton", partner_name="Joe"
+        )
+
+        tuesday_field = next(f for f in embed.fields if f.name == "Tuesday, Jul 21")
+        self.assertIn("🏠 Peyton", tuesday_field.value)
+        self.assertIn("🗑️", tuesday_field.value)
+        self.assertIn("Trash reminder call", tuesday_field.value)
+
     def test_no_blank_line_between_office_status_and_events(self):
         events = [
             _all_day_event("Peyton office day", MONDAY),

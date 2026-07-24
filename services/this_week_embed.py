@@ -7,6 +7,7 @@ from datetime import date, datetime, time, timedelta
 
 import discord
 
+from config.waste_schedule import WASTE_SCHEDULE
 from services.chores import chores_due_soon, is_overdue
 from services.schedule import format_event_sources, format_time, is_office_day, office_event_name
 
@@ -55,6 +56,10 @@ def _office_status_line(events: list[dict], day: date, personal_name: str, partn
     return "  ".join(parts)
 
 
+def _waste_line(day: date) -> str | None:
+    return WASTE_SCHEDULE.get(day.weekday())
+
+
 def build_this_week_embed(
     monday: date,
     events: list[dict],
@@ -89,6 +94,10 @@ def build_this_week_embed(
         parts = []
         if show_office_status:
             parts.append(_office_status_line(events, day, personal_name, partner_name))
+
+        waste_line = _waste_line(day)
+        if waste_line:
+            parts.append(waste_line)
 
         if day_events:
             parts.append("\n".join(_format_event_line(event) for event in sorted(day_events, key=_event_sort_key)))

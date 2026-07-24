@@ -137,6 +137,9 @@ same one edited in place. It shows:
   set to) — put them on whichever calendar you like, they're matched by name only,
   and don't show up in the regular event list since the status line
   already covers them. With neither name set, this line doesn't appear at all.
+- A trash/recycling/compost line, same visual idea but driven by a fixed weekly
+  schedule in [`config/waste_schedule.py`](config/waste_schedule.py) instead of
+  calendar events — edit that file to match your own pickup days.
 - Chore status — anything overdue, and anything coming due within the next few days.
 
 Run **`/refresh_this_week`** any time to rebuild it immediately instead of waiting
@@ -313,6 +316,7 @@ config/
     discord_tags.py          Maps logical tag keys to Discord forum tag names/emoji
     recipe_keywords.py       Include/exclude keyword rules per tag
     chores.py                Default chores and their nudge thresholds
+    waste_schedule.py        Weekly trash/recycling/compost pickup days
 
 tests/                       Unit tests (unittest) for the services above
 ```
@@ -384,9 +388,28 @@ second.
   across all 4 calendars, ✅ the daily `#this-week` summary embed, ✅ `/task` and
   `/week` scheduling flows (including a Cancel button on every proposal), ✅
   office-day-aware scheduling (5pm-only proposals on a day either person is
-  marked in-office, plus an office/home status line on `#this-week`). All
-  originally-scoped pieces are built; possible next steps if useful later:
+  marked in-office, plus an office/home status line on `#this-week`), ✅
+  `/chore_stats`, ✅ a trash/recycling/compost line on `#this-week` driven by
+  `config/waste_schedule.py`. All originally-scoped pieces are built; possible
+  next steps if useful later:
   - Per-task duration instead of a fixed 30 minutes; editing or cancelling an
     already-confirmed task/event from Discord (not just an unconfirmed proposal)
   - Mark a one-off `/task`/`/week` item as actually completed via a ✅ reaction on
     its confirmation message, separate from the recurring-chore `/done` system
+  - A proper chore history table (parallel to `cooking_log`) logging every
+    `/done` as its own row instead of overwriting one "last done" field per
+    chore — unlocks real cumulative stats (totals over time, streaks,
+    "who's done more this month") instead of `/chore_stats`' current
+    snapshot-only view
+  - `/undo_done` to walk back a mistaken `/done` — depends on the chore
+    history table above to know what the previous state actually was
+  - A weekly digest post (Sunday night or Monday morning) summarizing the
+    *previous* week — chores done and by whom, tasks completed, what's still
+    overdue — as the backward-looking counterpart to `#this-week`'s
+    forward-looking view. More useful once the chore history table exists.
+  - `/random` for chores — suggest what to do today, weighted toward
+    whatever's most overdue, mirroring `/random`'s recipe-suggestion behavior
+  - Before actually booking a `/task`/`/week` confirmation, re-check the
+    calendar one more time for a conflict that appeared between the proposal
+    and the click (small race-condition edge case, low priority for a
+    two-person household but cheap to add)
