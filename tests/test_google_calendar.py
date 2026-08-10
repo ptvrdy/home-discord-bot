@@ -8,8 +8,11 @@ from services.google_calendar import (
     default_write_calendar_id,
     delete_event,
     get_configured_calendars,
+    get_event,
     get_week_events,
     list_events,
+    rename_event,
+    update_event,
 )
 
 
@@ -265,6 +268,95 @@ class DeleteEventTests(unittest.TestCase):
             delete_event("event-123", service=service)
 
         service.events().delete.assert_any_call(calendarId="fam@example.com", eventId="event-123")
+
+
+class GetEventTests(unittest.TestCase):
+    def test_fetches_the_event_on_the_given_calendar(self):
+        service = MagicMock()
+        service.events().get().execute.return_value = {"id": "event-123", "summary": "call vet"}
+
+        result = get_event("event-123", calendar_id="fam@example.com", service=service)
+
+        self.assertEqual(result, {"id": "event-123", "summary": "call vet"})
+        service.events().get.assert_any_call(calendarId="fam@example.com", eventId="event-123")
+
+    def test_uses_default_write_calendar_when_not_specified(self):
+        env = {"FAMILY_CALENDAR_ID": "fam@example.com"}
+        service = MagicMock()
+        service.events().get().execute.return_value = {"id": "event-123"}
+
+        with patch.dict("os.environ", env, clear=True):
+            get_event("event-123", service=service)
+
+        service.events().get.assert_any_call(calendarId="fam@example.com", eventId="event-123")
+
+
+class UpdateEventTests(unittest.TestCase):
+    def test_patches_start_and_end_on_the_given_calendar(self):
+        service = MagicMock()
+        service.events().patch().execute.return_value = {"id": "event-123"}
+        start = datetime(2026, 7, 23, 17, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 7, 23, 17, 30, tzinfo=timezone.utc)
+
+        result = update_event("event-123", start, end, calendar_id="fam@example.com", service=service)
+
+        self.assertEqual(result, {"id": "event-123"})
+        service.events().patch.assert_any_call(
+            calendarId="fam@example.com",
+            eventId="event-123",
+            body={
+                "start": {"dateTime": start.isoformat()},
+                "end": {"dateTime": end.isoformat()},
+            },
+        )
+
+    def test_uses_default_write_calendar_when_not_specified(self):
+        env = {"FAMILY_CALENDAR_ID": "fam@example.com"}
+        service = MagicMock()
+        service.events().patch().execute.return_value = {"id": "event-123"}
+        start = datetime(2026, 7, 23, 17, 0, tzinfo=timezone.utc)
+        end = datetime(2026, 7, 23, 17, 30, tzinfo=timezone.utc)
+
+        with patch.dict("os.environ", env, clear=True):
+            update_event("event-123", start, end, service=service)
+
+        service.events().patch.assert_any_call(
+            calendarId="fam@example.com",
+            eventId="event-123",
+            body={
+                "start": {"dateTime": start.isoformat()},
+                "end": {"dateTime": end.isoformat()},
+            },
+        )
+
+
+class RenameEventTests(unittest.TestCase):
+    def test_patches_the_summary_on_the_given_calendar(self):
+        service = MagicMock()
+        service.events().patch().execute.return_value = {"id": "event-123"}
+
+        result = rename_event("event-123", "✅ call vet", calendar_id="fam@example.com", service=service)
+
+        self.assertEqual(result, {"id": "event-123"})
+        service.events().patch.assert_any_call(
+            calendarId="fam@example.com",
+            eventId="event-123",
+            body={"summary": "✅ call vet"},
+        )
+
+    def test_uses_default_write_calendar_when_not_specified(self):
+        env = {"FAMILY_CALENDAR_ID": "fam@example.com"}
+        service = MagicMock()
+        service.events().patch().execute.return_value = {"id": "event-123"}
+
+        with patch.dict("os.environ", env, clear=True):
+            rename_event("event-123", "✅ call vet", service=service)
+
+        service.events().patch.assert_any_call(
+            calendarId="fam@example.com",
+            eventId="event-123",
+            body={"summary": "✅ call vet"},
+        )
 
 
 if __name__ == "__main__":

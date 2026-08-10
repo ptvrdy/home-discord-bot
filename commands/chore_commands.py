@@ -10,15 +10,21 @@ from services.chore_stats_embed import build_chore_stats_embed
 from services.chores import (
     chore_stats,
     chores_needing_nudge,
+    count_completions_by_person,
     days_since,
+    fairness_callout,
+    filter_person_completions,
     format_nudge_message,
+    mention_for_person,
     random_overdue_chore,
 )
 from services.database import (
     get_all_chores,
     get_chore_completions_between,
     get_chore_completions_by_person,
+    get_chore_log_entries,
     get_chore_names,
+    get_completed_tasks_between,
     get_state,
     mark_chore_done,
     mark_nudge_sent,
@@ -76,8 +82,9 @@ async def post_weekly_digest(bot: commands.Bot) -> None:
     range_end = datetime.combine(this_week_start, datetime.min.time(), tzinfo=HOUSEHOLD_TZ)
 
     completions = get_chore_completions_between(range_start, range_end)
+    tasks = get_completed_tasks_between(range_start, range_end)
     chores = get_all_chores()
-    embed = build_weekly_digest_embed(last_week_start, completions, chores, now)
+    embed = build_weekly_digest_embed(last_week_start, completions, chores, now, tasks=tasks)
 
     message_id = get_state(WEEKLY_DIGEST_MESSAGE_STATE_KEY)
     if message_id:
@@ -125,8 +132,19 @@ class Chores(commands.Cog):
 
         now = datetime.now(HOUSEHOLD_TZ)
         chores = get_all_chores()
+        personal_name = os.getenv("PERSONAL_NAME")
+        partner_name = os.getenv("PARTNER_NAME")
+        personal_discord_id = os.getenv("PERSONAL_DISCORD_ID")
+        partner_discord_id = os.getenv("PARTNER_DISCORD_ID")
         for chore in chores_needing_nudge(chores, now):
-            await channel.send(format_nudge_message(chore, now))
+            entries = get_chore_log_entries(chore["name"])
+            next_person = fairness_callout(entries, personal_name, partner_name)
+            next_mention = (
+                mention_for_person(next_person, personal_name, partner_name, personal_discord_id, partner_discord_id)
+                if next_person
+                else None
+            )
+            await channel.send(format_nudge_message(chore, now, next_mention))
             mark_nudge_sent(chore["name"], now)
 
     @nudge_check.before_loop
@@ -173,10 +191,30 @@ class Chores(commands.Cog):
     )
     async def chore_stats_command(self, interaction: discord.Interaction):
         now = datetime.now(HOUSEHOLD_TZ)
-        stats = chore_stats(get_all_chores(), now)
-        stats["by_person"] = {
-            row["done_by"]: row["entry_count"] for row in get_chore_completions_by_person()
-        }
+        chores = get_all_chores()
+        stats = chore_stats(chores, now)
+        raw_by_person = {row["done_by"]: row["entry_count"] for row in get_chore_completions_by_person()}
+        stats["by_person"] = filter_person_completions(raw_by_person)
+
+        month_start = now - timedelta(days=30)
+        recent_completions = get_chore_completions_between(month_start, now + timedelta(seconds=1))
+        stats["by_person_month"] = count_completions_by_person(recent_completions)
+
+        personal_name = os.getenv("PERSONAL_NAME")
+        partner_name = os.getenv("PARTNER_NAME")
+        personal_discord_id = os.getenv("PERSONAL_DISCORD_ID")
+        partner_discord_id = os.getenv("PARTNER_DISCORD_ID")
+        fairness_callouts = []
+        for chore in chores:
+            entries = get_chore_log_entries(chore["name"])
+            next_person = fairness_callout(entries, personal_name, partner_name)
+            if next_person:
+                next_mention = mention_for_person(
+                    next_person, personal_name, partner_name, personal_discord_id, partner_discord_id
+                )
+                fairness_callouts.append({"chore": chore["name"], "next_person": next_mention})
+        stats["fairness_callouts"] = fairness_callouts
+
         await interaction.response.send_message(embed=build_chore_stats_embed(stats))
 
     @app_commands.command(

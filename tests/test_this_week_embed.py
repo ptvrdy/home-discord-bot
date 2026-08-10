@@ -111,7 +111,7 @@ class BuildThisWeekEmbedTests(unittest.TestCase):
         embed = build_this_week_embed(MONDAY, [event], [], NOW)
 
         monday_field = next(f for f in embed.fields if f.name == "Monday, Jul 20")
-        self.assertIn("[Vet Appointment ↗](https://www.google.com/calendar/event?eid=abc123)", monday_field.value)
+        self.assertIn("[Vet Appointment ↗︎](https://www.google.com/calendar/event?eid=abc123)", monday_field.value)
 
     def test_event_name_is_plain_text_without_a_url(self):
         event = _timed_event("Vet Appointment", date(2026, 7, 20), 9, url=None)
@@ -273,6 +273,56 @@ class BuildThisWeekEmbedTests(unittest.TestCase):
         self.assertIn("🏠 Peyton", tuesday_field.value)
         self.assertIn("🗑️", tuesday_field.value)
         self.assertIn("Trash reminder call", tuesday_field.value)
+
+    def test_food_field_shows_placeholder_when_nothing_planned(self):
+        embed = build_this_week_embed(MONDAY, [], [], NOW)
+
+        food_field = next(f for f in embed.fields if f.name == "🍽️ This Week's Food")
+        self.assertIn("Nothing planned yet", food_field.value)
+
+    def test_food_field_groups_by_meal_type(self):
+        meal_plan_items = [
+            {"meal_type": "dinner", "recipe_title": "Tacos"},
+            {"meal_type": "breakfast", "recipe_title": "Pancakes"},
+            {"meal_type": "dinner", "recipe_title": "Stir Fry"},
+        ]
+
+        embed = build_this_week_embed(MONDAY, [], [], NOW, meal_plan_items=meal_plan_items)
+
+        food_field = next(f for f in embed.fields if f.name == "🍽️ This Week's Food")
+        self.assertIn("Breakfast", food_field.value)
+        self.assertIn("Pancakes", food_field.value)
+        self.assertIn("Dinner", food_field.value)
+        self.assertIn("Tacos", food_field.value)
+        self.assertIn("Stir Fry", food_field.value)
+        self.assertNotIn("Lunch", food_field.value)
+        self.assertLess(food_field.value.index("Breakfast"), food_field.value.index("Dinner"))
+
+    def test_food_field_is_not_tied_to_a_day_field(self):
+        meal_plan_items = [{"meal_type": "dinner", "recipe_title": "Tacos"}]
+
+        embed = build_this_week_embed(MONDAY, [], [], NOW, meal_plan_items=meal_plan_items)
+
+        monday_field = next(f for f in embed.fields if f.name == "Monday, Jul 20")
+        self.assertNotIn("Tacos", monday_field.value)
+
+    def test_overdue_chore_shows_fairness_callout_when_flagged(self):
+        chores = [_chore(name="Vacuum stairs", last_done_at=None)]
+
+        embed = build_this_week_embed(
+            MONDAY, [], chores, NOW, chore_fairness={"Vacuum stairs": "Joe"}
+        )
+
+        overdue_field = next(f for f in embed.fields if f.name == "🧹 Chores Overdue")
+        self.assertIn("Joe's turn", overdue_field.value)
+
+    def test_overdue_chore_has_no_callout_when_not_flagged(self):
+        chores = [_chore(name="Vacuum stairs", last_done_at=None)]
+
+        embed = build_this_week_embed(MONDAY, [], chores, NOW)
+
+        overdue_field = next(f for f in embed.fields if f.name == "🧹 Chores Overdue")
+        self.assertNotIn("'s turn", overdue_field.value)
 
     def test_no_blank_line_between_office_status_and_events(self):
         events = [

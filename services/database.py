@@ -3,7 +3,7 @@
 import json
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from config.chores import DEFAULT_CHORES
@@ -106,6 +106,42 @@ def initialize_database(database_path: Path = DATABASE_PATH) -> None:
             CREATE TABLE IF NOT EXISTS bot_state (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS booked_tasks (
+                id INTEGER PRIMARY KEY,
+                message_id INTEGER NOT NULL UNIQUE,
+                channel_id INTEGER NOT NULL,
+                task_name TEXT NOT NULL,
+                event_id TEXT NOT NULL,
+                calendar_id TEXT NOT NULL,
+                booked_at TEXT NOT NULL,
+                booked_by TEXT NOT NULL,
+                completed_at TEXT,
+                completed_by TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS wishlist_items (
+                id INTEGER PRIMARY KEY,
+                message_id INTEGER NOT NULL UNIQUE,
+                channel_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                url TEXT NOT NULL,
+                image_url TEXT,
+                price TEXT,
+                added_by TEXT NOT NULL,
+                added_at TEXT NOT NULL,
+                bought_at TEXT,
+                bought_by TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS meal_plan_items (
+                id INTEGER PRIMARY KEY,
+                week_start TEXT NOT NULL,
+                meal_type TEXT NOT NULL,
+                recipe_title TEXT NOT NULL,
+                added_by TEXT NOT NULL,
+                added_at TEXT NOT NULL
             );
             """
         )
@@ -833,3 +869,223 @@ def set_state(key: str, value: str, database_path: Path = DATABASE_PATH) -> None
             """,
             (key, value),
         )
+
+
+def record_booked_task(
+    message_id: int,
+    channel_id: int,
+    task_name: str,
+    event_id: str,
+    calendar_id: str,
+    booked_at: datetime,
+    booked_by: str,
+    database_path: Path = DATABASE_PATH,
+) -> None:
+    """Remember which calendar event a /task or /week confirmation message
+    corresponds to - needed to resolve a later ✅ reaction or an "edit this
+    task" context-menu action back to the right Google Calendar event, since
+    neither carries that context on its own."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO booked_tasks
+                (message_id, channel_id, task_name, event_id, calendar_id, booked_at, booked_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (message_id, channel_id, task_name, event_id, calendar_id, booked_at.isoformat(), booked_by),
+        )
+
+
+def get_booked_task(message_id: int, database_path: Path = DATABASE_PATH) -> dict | None:
+    """Look up a booked task by its Discord confirmation message ID."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        row = connection.execute(
+            "SELECT * FROM booked_tasks WHERE message_id = ?", (message_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def mark_task_completed(
+    message_id: int,
+    completed_at: datetime,
+    completed_by: str,
+    database_path: Path = DATABASE_PATH,
+) -> dict | None:
+    """Record a booked task as completed (via ✅ reaction). Returns the
+    updated row, or None if there's no booked task for that message, or it's
+    already marked completed (so a reaction can't double-fire)."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        cursor = connection.execute(
+            """
+            UPDATE booked_tasks
+            SET completed_at = ?, completed_by = ?
+            WHERE message_id = ? AND completed_at IS NULL
+            """,
+            (completed_at.isoformat(), completed_by, message_id),
+        )
+        if cursor.rowcount == 0:
+            return None
+        row = connection.execute(
+            "SELECT * FROM booked_tasks WHERE message_id = ?", (message_id,)
+        ).fetchone()
+        return dict(row)
+
+
+def delete_booked_task(message_id: int, database_path: Path = DATABASE_PATH) -> None:
+    """Forget a booked task - used when its calendar event is undone, so a
+    stale message can no longer be marked completed or edited."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.execute("DELETE FROM booked_tasks WHERE message_id = ?", (message_id,))
+
+
+def record_wishlist_item(
+    message_id: int,
+    channel_id: int,
+    title: str,
+    url: str,
+    image_url: str | None,
+    price: str | None,
+    added_by: str,
+    added_at: datetime,
+    database_path: Path = DATABASE_PATH,
+) -> None:
+    """Remember a /want link's posted message so a later ✅ reaction can be
+    resolved back to it and marked bought."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO wishlist_items
+                (message_id, channel_id, title, url, image_url, price, added_by, added_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (message_id, channel_id, title, url, image_url, price, added_by, added_at.isoformat()),
+        )
+
+
+def get_wishlist_item(message_id: int, database_path: Path = DATABASE_PATH) -> dict | None:
+    """Look up a wishlist item by its Discord message ID."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        row = connection.execute(
+            "SELECT * FROM wishlist_items WHERE message_id = ?", (message_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def mark_wishlist_item_bought(
+    message_id: int,
+    bought_at: datetime,
+    bought_by: str,
+    database_path: Path = DATABASE_PATH,
+) -> dict | None:
+    """Record a wishlist item as bought (via ✅ reaction). Returns the
+    updated row, or None if there's no wishlist item for that message, or
+    it's already marked bought (so a reaction can't double-fire)."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        cursor = connection.execute(
+            """
+            UPDATE wishlist_items
+            SET bought_at = ?, bought_by = ?
+            WHERE message_id = ? AND bought_at IS NULL
+            """,
+            (bought_at.isoformat(), bought_by, message_id),
+        )
+        if cursor.rowcount == 0:
+            return None
+        row = connection.execute(
+            "SELECT * FROM wishlist_items WHERE message_id = ?", (message_id,)
+        ).fetchone()
+        return dict(row)
+
+
+def get_open_wishlist_items(database_path: Path = DATABASE_PATH) -> list[dict]:
+    """Every wishlist item not yet marked bought, oldest first - what
+    /wishlist shows."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            "SELECT * FROM wishlist_items WHERE bought_at IS NULL ORDER BY added_at ASC"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def add_meal_plan_item(
+    week_start: date,
+    meal_type: str,
+    recipe_title: str,
+    added_by: str,
+    added_at: datetime,
+    database_path: Path = DATABASE_PATH,
+) -> None:
+    """Add a recipe to this week's breakfast/lunch/dinner list - deliberately
+    not tied to a specific day, since meal plans shift around (takeout,
+    forgot to defrost something, etc.)."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO meal_plan_items (week_start, meal_type, recipe_title, added_by, added_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (week_start.isoformat(), meal_type, recipe_title, added_by, added_at.isoformat()),
+        )
+
+
+def get_meal_plan_items(week_start: date, database_path: Path = DATABASE_PATH) -> list[dict]:
+    """Every recipe planned for the given week, in the order they were
+    added - used to render the #this-week food section."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            "SELECT * FROM meal_plan_items WHERE week_start = ? ORDER BY id ASC",
+            (week_start.isoformat(),),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def clear_meal_plan(week_start: date, database_path: Path = DATABASE_PATH) -> int:
+    """Remove every planned recipe for the given week. Returns how many rows
+    were removed, so /clear_meal_plan can report whether there was anything
+    to clear."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        cursor = connection.execute(
+            "DELETE FROM meal_plan_items WHERE week_start = ?", (week_start.isoformat(),)
+        )
+        return cursor.rowcount
+
+
+def get_completed_tasks_between(
+    start: datetime,
+    end: datetime,
+    database_path: Path = DATABASE_PATH,
+) -> list[dict]:
+    """Return every /task or /week booking marked completed (via the ✅
+    reaction) in [start, end), ordered chronologically - the one-off-task
+    counterpart to get_chore_completions_between(), used by the weekly
+    digest."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT task_name, completed_at, completed_by
+            FROM booked_tasks
+            WHERE completed_at IS NOT NULL AND completed_at >= ? AND completed_at < ?
+            ORDER BY completed_at ASC
+            """,
+            (start.isoformat(), end.isoformat()),
+        ).fetchall()
+        return [dict(row) for row in rows]

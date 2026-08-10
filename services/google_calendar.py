@@ -199,3 +199,51 @@ def delete_event(
     service = service or get_service()
     calendar_id = calendar_id or default_write_calendar_id()
     service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+
+
+def get_event(
+    event_id: str,
+    calendar_id: str | None = None,
+    service=None,
+) -> dict:
+    """Fetch a single event's current raw data by ID - used before editing
+    one, to know its current start/end so it can be excluded from conflict
+    checks against the new proposed time."""
+    service = service or get_service()
+    calendar_id = calendar_id or default_write_calendar_id()
+    return service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+
+
+def update_event(
+    event_id: str,
+    start: datetime,
+    end: datetime,
+    calendar_id: str | None = None,
+    service=None,
+) -> dict:
+    """Move an already-confirmed event to a new start/end. Defaults to
+    default_write_calendar_id() when no calendar is specified, matching
+    where create_event() would have put it."""
+    service = service or get_service()
+    calendar_id = calendar_id or default_write_calendar_id()
+    body = {
+        "start": {"dateTime": start.isoformat()},
+        "end": {"dateTime": end.isoformat()},
+    }
+    return service.events().patch(calendarId=calendar_id, eventId=event_id, body=body).execute()
+
+
+def rename_event(
+    event_id: str,
+    name: str,
+    calendar_id: str | None = None,
+    service=None,
+) -> dict:
+    """Change an event's title - used to prefix a completed task with ✅ so
+    it's visually distinguished on the calendar itself, not just in Discord.
+    Defaults to default_write_calendar_id() when no calendar is specified,
+    matching where create_event() would have put it."""
+    service = service or get_service()
+    calendar_id = calendar_id or default_write_calendar_id()
+    body = {"summary": name}
+    return service.events().patch(calendarId=calendar_id, eventId=event_id, body=body).execute()

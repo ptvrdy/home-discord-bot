@@ -5,6 +5,53 @@ import random
 from datetime import datetime
 
 
+# Attribution used for a chore_log entry that seeds a chore's history (e.g.
+# anchoring a new chore's due date to a specific future day) rather than
+# recording a real person's completion. Callers building a leaderboard or
+# similar per-person view should filter this out - see
+# services/chore_stats_embed.py / commands/chore_commands.py.
+SYSTEM_ATTRIBUTION = "System"
+
+
+def filter_person_completions(by_person: dict[str, int]) -> dict[str, int]:
+    """Remove SYSTEM_ATTRIBUTION from a completions-by-person breakdown -
+    system-seeded entries (e.g. anchoring a new chore's start date) aren't
+    real household activity and shouldn't show up in a leaderboard."""
+    return {name: count for name, count in by_person.items() if name != SYSTEM_ATTRIBUTION}
+
+
+def count_completions_by_person(entries: list[dict]) -> dict[str, int]:
+    """Aggregate a list of chore_log-style entries (each with a "done_by"
+    key, e.g. from get_chore_completions_between()) into {person: count},
+    excluding SYSTEM_ATTRIBUTION seed entries."""
+    counts: dict[str, int] = {}
+    for entry in entries:
+        who = entry["done_by"]
+        if who == SYSTEM_ATTRIBUTION:
+            continue
+        counts[who] = counts.get(who, 0) + 1
+    return counts
+
+
+def mention_for_person(
+    name: str,
+    personal_name: str | None,
+    partner_name: str | None,
+    personal_discord_id: str | None,
+    partner_discord_id: str | None,
+) -> str:
+    """Map a household member's display name (as matched against
+    PERSONAL_NAME/PARTNER_NAME) to a real Discord ping (<@id>) built from
+    their PERSONAL_DISCORD_ID/PARTNER_DISCORD_ID, so a fairness callout
+    actually notifies them instead of just printing their name. Falls back
+    to the plain name if the matching Discord ID isn't configured."""
+    if name == personal_name and personal_discord_id:
+        return f"<@{personal_discord_id}>"
+    if name == partner_name and partner_discord_id:
+        return f"<@{partner_discord_id}>"
+    return name
+
+
 def _parse(timestamp: str | None) -> datetime | None:
     return datetime.fromisoformat(timestamp) if timestamp else None
 
@@ -116,17 +163,59 @@ def random_overdue_chore(
     return rng.choices(overdue, weights=weights, k=1)[0]
 
 
-def format_nudge_message(chore: dict, now: datetime) -> str:
-    """Render one overdue-chore reminder line for #nudges."""
+FAIRNESS_STREAK = 3
+
+
+def fairness_callout(
+    entries: list[dict],
+    personal_name: str | None,
+    partner_name: str | None,
+    streak: int = FAIRNESS_STREAK,
+) -> str | None:
+    """If the last `streak` real completions of a chore (from
+    get_chore_log_entries()-style entries, oldest first) were all done by
+    the same one of the two named household members, return the OTHER
+    member's name - the household's swung too far to one person on this
+    chore. Returns None if there aren't enough logged completions yet, the
+    streak is mixed, the names aren't configured, or the streak belongs to
+    someone other than the two named household members (e.g. a guest)."""
+    if not personal_name or not partner_name:
+        return None
+
+    real_entries = [entry for entry in entries if entry["done_by"] != SYSTEM_ATTRIBUTION]
+    if len(real_entries) < streak:
+        return None
+
+    recent = real_entries[-streak:]
+    doer = recent[0]["done_by"]
+    if any(entry["done_by"] != doer for entry in recent):
+        return None
+
+    if doer == personal_name:
+        return partner_name
+    if doer == partner_name:
+        return personal_name
+    return None
+
+
+def format_nudge_message(chore: dict, now: datetime, next_person: str | None = None) -> str:
+    """Render one overdue-chore reminder line for #nudges. If next_person is
+    given (from fairness_callout() against the chore's full history), append
+    a pointed callout so the reminder doesn't default to whoever's turn it
+    "feels" like based only on the last completion."""
     days = days_since(chore["last_done_at"], now)
     if days is None:
         history = "it's never been logged as done"
+        who = None
     else:
         who = chore["last_done_by"] or "someone"
         day_word = "day" if days == 1 else "days"
         history = f"{who} last did it {days} {day_word} ago"
 
-    return (
+    message = (
         f"🧹 **{chore['name']}** is overdue "
         f"(threshold: {chore['threshold_days']} days) — {history}."
     )
+    if next_person:
+        message += f"\n🔁 {next_person}, this one's been on {who} the last few times — your turn?"
+    return message

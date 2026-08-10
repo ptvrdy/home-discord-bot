@@ -11,6 +11,10 @@ def _completion(chore_name, done_by, done_at):
     return {"chore_name": chore_name, "done_by": done_by, "done_at": done_at}
 
 
+def _task(task_name, completed_by, completed_at):
+    return {"task_name": task_name, "completed_by": completed_by, "completed_at": completed_at}
+
+
 def _chore(**overrides):
     chore = {
         "name": "Mop",
@@ -81,6 +85,38 @@ class BuildWeeklyDigestEmbedTests(unittest.TestCase):
         embed = build_weekly_digest_embed(WEEK_START, [], chores, NOW)
 
         self.assertNotIn("Still Overdue", {f.name for f in embed.fields})
+
+    def test_no_tasks_completed_field_when_no_tasks(self):
+        embed = build_weekly_digest_embed(WEEK_START, [], [], NOW)
+
+        self.assertNotIn("📦 Tasks Completed", {f.name for f in embed.fields})
+
+    def test_lists_each_completed_task_with_person_and_day(self):
+        tasks = [
+            _task("Call vet", "Joe", datetime(2026, 7, 14, 9, 0, tzinfo=timezone.utc).isoformat()),
+        ]
+
+        embed = build_weekly_digest_embed(WEEK_START, [], [], NOW, tasks=tasks)
+
+        fields = {f.name: f.value for f in embed.fields}
+        self.assertIn("Call vet", fields["📦 Tasks Completed"])
+        self.assertIn("Joe", fields["📦 Tasks Completed"])
+        self.assertIn("Jul 14", fields["📦 Tasks Completed"])
+
+    def test_leaderboard_combines_chores_and_tasks(self):
+        completions = [
+            _completion("Mop", "Peyton", datetime(2026, 7, 14, tzinfo=timezone.utc).isoformat()),
+        ]
+        tasks = [
+            _task("Call vet", "Peyton", datetime(2026, 7, 15, tzinfo=timezone.utc).isoformat()),
+            _task("Buy dog food", "Joe", datetime(2026, 7, 16, tzinfo=timezone.utc).isoformat()),
+        ]
+
+        embed = build_weekly_digest_embed(WEEK_START, completions, [], NOW, tasks=tasks)
+
+        fields = {f.name: f.value for f in embed.fields}
+        self.assertIn("Peyton: 2", fields["🏆 Last Week's Leaderboard"])
+        self.assertIn("Joe: 1", fields["🏆 Last Week's Leaderboard"])
 
 
 if __name__ == "__main__":

@@ -194,9 +194,16 @@ HELP_SECTIONS = [
         [
             ("/done <chore>", "Log a chore as completed. Add someone to attribute it to them, or a days_ago to backdate it."),
             ("/undo_done <chore>", "Remove the most recent /done you logged for a chore."),
-            ("/chore_stats", "Chore board size, overdue/coming-up counts, the most overdue chore, and cumulative completions per person."),
-            ("/weekly_digest", "Manually post the weekly recap instead of waiting for the automatic Sunday 8pm post."),
+            ("/chore_stats", "Chore board size, overdue/coming-up counts, the most overdue chore, completions per person (all-time and last 30 days), and a Whose Turn? fairness callout."),
+            ("/weekly_digest", "Manually post the weekly recap (chores and tasks completed) instead of waiting for the automatic Sunday 8pm post."),
             ("/random_chore", "Suggest what to do today, weighted toward whatever's most overdue."),
+        ],
+    ),
+    (
+        "🍽️ Meal Plan",
+        [
+            ("/plan_meal <meal> <recipe>", "Add a recipe to this week's Breakfast/Lunch/Dinner list, not tied to a specific day. Shows on #this-week; auto-clears weekly."),
+            ("/clear_meal_plan", "Clear this week's food list and start over."),
         ],
     ),
     (
@@ -205,6 +212,13 @@ HELP_SECTIONS = [
             ("/task <request>", 'Schedule a quick one-off task, e.g. "call vet" or "call vet thursday at 5pm". Proposes a free slot for you to confirm, unless you gave an exact time.'),
             ("/week", "Schedule up to 5 one-off tasks this week — autocomplete suggests your chores, but you can type anything. Proposes a free slot for each."),
             ("/refresh_this_week", "Manually rebuild the #this-week schedule embed instead of waiting for the daily refresh."),
+        ],
+    ),
+    (
+        "🛍️ House Wishlist",
+        [
+            ("/want <url>", "Add a link to the house wishlist — pulls title/image/price from the page when available. React ✅ once bought."),
+            ("/wishlist", "See everything still on the wishlist, oldest first."),
         ],
     ),
     (

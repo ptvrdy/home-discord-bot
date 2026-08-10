@@ -1,18 +1,24 @@
 import sqlite3
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from models.recipe_card import Recipe
 from services.database import (
     add_cooking_log,
+    delete_booked_task,
     get_all_chores,
+    get_booked_task,
     get_chore_completions_between,
     get_chore_completions_by_person,
     get_chore_log_entries,
+    add_meal_plan_item,
+    clear_meal_plan,
     get_chore_names,
+    get_completed_tasks_between,
     get_cooking_log_entries,
+    get_meal_plan_items,
     get_cooking_stats,
     get_journal_message_id,
     get_random_recipe,
@@ -22,10 +28,16 @@ from services.database import (
     get_recipe_by_url,
     get_recipe_tags,
     get_recipes_needing_review,
+    get_open_wishlist_items,
     get_state,
+    get_wishlist_item,
     initialize_database,
     mark_chore_done,
     mark_nudge_sent,
+    mark_task_completed,
+    mark_wishlist_item_bought,
+    record_booked_task,
+    record_wishlist_item,
     save_recipe,
     set_state,
     search_recipe_titles,
@@ -858,3 +870,300 @@ class BotStateTests(unittest.TestCase):
             self.assertEqual(found["ingredients"], ["chicken", "broth"])
 
             self.assertIsNone(get_recipe_by_title("Chicken Sou", database_path=database_path))
+
+
+class BookedTaskTests(unittest.TestCase):
+    def test_round_trips_a_booked_task(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            booked_at = datetime(2026, 8, 10, tzinfo=timezone.utc)
+
+            record_booked_task(
+                111, 222, "call vet", "event-abc", "fam@example.com", booked_at, "Peyton", database_path
+            )
+
+            task = get_booked_task(111, database_path)
+            self.assertEqual(task["task_name"], "call vet")
+            self.assertEqual(task["event_id"], "event-abc")
+            self.assertEqual(task["calendar_id"], "fam@example.com")
+            self.assertEqual(task["booked_by"], "Peyton")
+            self.assertIsNone(task["completed_at"])
+            self.assertIsNone(task["completed_by"])
+
+    def test_returns_none_for_unknown_message(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+
+            self.assertIsNone(get_booked_task(999, database_path))
+
+    def test_mark_task_completed_sets_completion_fields(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            booked_at = datetime(2026, 8, 10, tzinfo=timezone.utc)
+            record_booked_task(
+                111, 222, "call vet", "event-abc", "fam@example.com", booked_at, "Peyton", database_path
+            )
+            completed_at = datetime(2026, 8, 11, tzinfo=timezone.utc)
+
+            result = mark_task_completed(111, completed_at, "Joe", database_path)
+
+            self.assertEqual(result["completed_by"], "Joe")
+            self.assertEqual(result["completed_at"], completed_at.isoformat())
+
+    def test_mark_task_completed_returns_none_for_unknown_message(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+
+            self.assertIsNone(mark_task_completed(999, datetime.now(timezone.utc), "Joe", database_path))
+
+    def test_mark_task_completed_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            booked_at = datetime(2026, 8, 10, tzinfo=timezone.utc)
+            record_booked_task(
+                111, 222, "call vet", "event-abc", "fam@example.com", booked_at, "Peyton", database_path
+            )
+            mark_task_completed(111, datetime(2026, 8, 11, tzinfo=timezone.utc), "Joe", database_path)
+
+            # A second reaction shouldn't overwrite who/when it was first completed.
+            second = mark_task_completed(111, datetime(2026, 8, 12, tzinfo=timezone.utc), "Peyton", database_path)
+
+            self.assertIsNone(second)
+            task = get_booked_task(111, database_path)
+            self.assertEqual(task["completed_by"], "Joe")
+
+    def test_delete_booked_task_removes_it(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            booked_at = datetime(2026, 8, 10, tzinfo=timezone.utc)
+            record_booked_task(
+                111, 222, "call vet", "event-abc", "fam@example.com", booked_at, "Peyton", database_path
+            )
+
+            delete_booked_task(111, database_path)
+
+            self.assertIsNone(get_booked_task(111, database_path))
+
+    def test_delete_booked_task_is_a_no_op_for_unknown_message(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+
+            delete_booked_task(999, database_path)  # should not raise
+
+
+class GetCompletedTasksBetweenTests(unittest.TestCase):
+    def test_returns_only_tasks_completed_in_range(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            booked_at = datetime(2026, 8, 1, tzinfo=timezone.utc)
+            record_booked_task(
+                111, 222, "call vet", "event-1", "fam@example.com", booked_at, "Peyton", database_path
+            )
+            record_booked_task(
+                333, 222, "buy dog food", "event-2", "fam@example.com", booked_at, "Joe", database_path
+            )
+            mark_task_completed(111, datetime(2026, 8, 10, tzinfo=timezone.utc), "Peyton", database_path)
+            mark_task_completed(333, datetime(2026, 8, 20, tzinfo=timezone.utc), "Joe", database_path)
+
+            results = get_completed_tasks_between(
+                datetime(2026, 8, 5, tzinfo=timezone.utc),
+                datetime(2026, 8, 15, tzinfo=timezone.utc),
+                database_path,
+            )
+
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["task_name"], "call vet")
+            self.assertEqual(results[0]["completed_by"], "Peyton")
+
+    def test_excludes_uncompleted_tasks(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            booked_at = datetime(2026, 8, 1, tzinfo=timezone.utc)
+            record_booked_task(
+                111, 222, "call vet", "event-1", "fam@example.com", booked_at, "Peyton", database_path
+            )
+
+            results = get_completed_tasks_between(
+                datetime(2026, 7, 1, tzinfo=timezone.utc),
+                datetime(2026, 9, 1, tzinfo=timezone.utc),
+                database_path,
+            )
+
+            self.assertEqual(results, [])
+
+
+class WishlistItemTests(unittest.TestCase):
+    def test_round_trips_a_wishlist_item(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            added_at = datetime(2026, 8, 10, tzinfo=timezone.utc)
+
+            record_wishlist_item(
+                111,
+                222,
+                "Dish Drying Rack",
+                "https://example.com/item",
+                "https://example.com/pic.jpg",
+                "24.99",
+                "Peyton",
+                added_at,
+                database_path,
+            )
+
+            item = get_wishlist_item(111, database_path)
+            self.assertEqual(item["title"], "Dish Drying Rack")
+            self.assertEqual(item["url"], "https://example.com/item")
+            self.assertEqual(item["image_url"], "https://example.com/pic.jpg")
+            self.assertEqual(item["price"], "24.99")
+            self.assertEqual(item["added_by"], "Peyton")
+            self.assertIsNone(item["bought_at"])
+            self.assertIsNone(item["bought_by"])
+
+    def test_returns_none_for_unknown_message(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+
+            self.assertIsNone(get_wishlist_item(999, database_path))
+
+    def test_mark_wishlist_item_bought_sets_completion_fields(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            added_at = datetime(2026, 8, 10, tzinfo=timezone.utc)
+            record_wishlist_item(
+                111, 222, "Dish Drying Rack", "https://example.com/item", None, None, "Peyton", added_at, database_path
+            )
+            bought_at = datetime(2026, 8, 11, tzinfo=timezone.utc)
+
+            result = mark_wishlist_item_bought(111, bought_at, "Joe", database_path)
+
+            self.assertEqual(result["bought_by"], "Joe")
+            self.assertEqual(result["bought_at"], bought_at.isoformat())
+
+    def test_mark_wishlist_item_bought_returns_none_for_unknown_message(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+
+            self.assertIsNone(mark_wishlist_item_bought(999, datetime.now(timezone.utc), "Joe", database_path))
+
+    def test_mark_wishlist_item_bought_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            added_at = datetime(2026, 8, 10, tzinfo=timezone.utc)
+            record_wishlist_item(
+                111, 222, "Dish Drying Rack", "https://example.com/item", None, None, "Peyton", added_at, database_path
+            )
+            mark_wishlist_item_bought(111, datetime(2026, 8, 11, tzinfo=timezone.utc), "Joe", database_path)
+
+            second = mark_wishlist_item_bought(111, datetime(2026, 8, 12, tzinfo=timezone.utc), "Peyton", database_path)
+
+            self.assertIsNone(second)
+            item = get_wishlist_item(111, database_path)
+            self.assertEqual(item["bought_by"], "Joe")
+
+    def test_get_open_wishlist_items_excludes_bought_items(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            added_at = datetime(2026, 8, 10, tzinfo=timezone.utc)
+            record_wishlist_item(
+                111, 222, "Dish Drying Rack", "https://example.com/1", None, None, "Peyton", added_at, database_path
+            )
+            record_wishlist_item(
+                222, 222, "Sheets", "https://example.com/2", None, None, "Joe", added_at, database_path
+            )
+            mark_wishlist_item_bought(111, datetime(2026, 8, 11, tzinfo=timezone.utc), "Joe", database_path)
+
+            open_items = get_open_wishlist_items(database_path)
+
+            self.assertEqual(len(open_items), 1)
+            self.assertEqual(open_items[0]["title"], "Sheets")
+
+    def test_get_open_wishlist_items_ordered_oldest_first(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            record_wishlist_item(
+                111, 222, "Second", "https://example.com/2",
+                None, None, "Peyton", datetime(2026, 8, 11, tzinfo=timezone.utc), database_path,
+            )
+            record_wishlist_item(
+                222, 222, "First", "https://example.com/1",
+                None, None, "Joe", datetime(2026, 8, 10, tzinfo=timezone.utc), database_path,
+            )
+
+            open_items = get_open_wishlist_items(database_path)
+
+            self.assertEqual([item["title"] for item in open_items], ["First", "Second"])
+
+
+class MealPlanItemTests(unittest.TestCase):
+    def test_round_trips_a_meal_plan_item(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            week_start = date(2026, 8, 10)
+            added_at = datetime(2026, 8, 10, tzinfo=timezone.utc)
+
+            add_meal_plan_item(week_start, "dinner", "Tacos", "Peyton", added_at, database_path)
+
+            items = get_meal_plan_items(week_start, database_path)
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0]["meal_type"], "dinner")
+            self.assertEqual(items[0]["recipe_title"], "Tacos")
+            self.assertEqual(items[0]["added_by"], "Peyton")
+
+    def test_only_returns_items_for_the_given_week(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            added_at = datetime(2026, 8, 10, tzinfo=timezone.utc)
+
+            add_meal_plan_item(date(2026, 8, 10), "dinner", "Tacos", "Peyton", added_at, database_path)
+            add_meal_plan_item(date(2026, 8, 17), "dinner", "Pizza", "Joe", added_at, database_path)
+
+            items = get_meal_plan_items(date(2026, 8, 10), database_path)
+
+            self.assertEqual([item["recipe_title"] for item in items], ["Tacos"])
+
+    def test_no_items_for_a_week_with_nothing_planned(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+
+            self.assertEqual(get_meal_plan_items(date(2026, 8, 10), database_path), [])
+
+    def test_clear_meal_plan_removes_items_for_the_week_and_returns_count(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            added_at = datetime(2026, 8, 10, tzinfo=timezone.utc)
+            add_meal_plan_item(date(2026, 8, 10), "dinner", "Tacos", "Peyton", added_at, database_path)
+            add_meal_plan_item(date(2026, 8, 10), "breakfast", "Pancakes", "Joe", added_at, database_path)
+            add_meal_plan_item(date(2026, 8, 17), "dinner", "Pizza", "Joe", added_at, database_path)
+
+            removed = clear_meal_plan(date(2026, 8, 10), database_path)
+
+            self.assertEqual(removed, 2)
+            self.assertEqual(get_meal_plan_items(date(2026, 8, 10), database_path), [])
+            self.assertEqual(len(get_meal_plan_items(date(2026, 8, 17), database_path)), 1)
+
+    def test_clear_meal_plan_returns_zero_when_nothing_to_clear(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+
+            self.assertEqual(clear_meal_plan(date(2026, 8, 10), database_path), 0)

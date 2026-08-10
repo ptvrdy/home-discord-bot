@@ -1,12 +1,8 @@
 """Builds the weekly digest embed: a backward-looking recap of the week that
-just ended - chores completed and by whom, plus whatever's still overdue -
-pairing with #this-week's forward-looking view. No Discord API calls or
-database access here - just data in, a discord.Embed out.
-
-Scope note: this only covers recurring chores (chore_log), not one-off
-/task or /week items - there's currently no way to tell a bot-booked
-calendar event apart from any other event on the calendar, so "tasks
-completed" isn't in here yet."""
+just ended - chores completed and by whom, one-off /task or /week bookings
+completed, plus whatever's still overdue - pairing with #this-week's
+forward-looking view. No Discord API calls or database access here - just
+data in, a discord.Embed out."""
 
 from datetime import date, datetime, timedelta
 
@@ -30,6 +26,7 @@ def build_weekly_digest_embed(
     completions: list[dict],
     chores: list[dict],
     now: datetime,
+    tasks: list[dict] | None = None,
 ) -> discord.Embed:
     week_end = week_start + timedelta(days=6)
     embed = discord.Embed(
@@ -51,9 +48,24 @@ def build_weekly_digest_embed(
     else:
         embed.add_field(name="Chores Completed", value="_Nothing logged last week_", inline=False)
 
+    tasks = tasks or []
+    if tasks:
+        lines = []
+        for entry in tasks:
+            completed_at = datetime.fromisoformat(entry["completed_at"])
+            lines.append(
+                f"✅ **{entry['task_name']}** — {entry['completed_by']} "
+                f"({format_day_label(completed_at.date())})"
+            )
+        embed.add_field(
+            name="📦 Tasks Completed", value=_truncate("\n".join(lines), FIELD_LIMIT), inline=False
+        )
+
     by_person: dict[str, int] = {}
     for entry in completions:
         by_person[entry["done_by"]] = by_person.get(entry["done_by"], 0) + 1
+    for entry in tasks:
+        by_person[entry["completed_by"]] = by_person.get(entry["completed_by"], 0) + 1
     if by_person:
         lines = [
             f"{name}: {count}" for name, count in sorted(by_person.items(), key=lambda pair: -pair[1])

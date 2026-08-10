@@ -6,7 +6,18 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from commands.chore_commands import chore_name_autocomplete
-from services.database import get_all_chores, get_state, set_state
+from services.chores import fairness_callout, mention_for_person
+from services.database import (
+    delete_booked_task,
+    get_all_chores,
+    get_booked_task,
+    get_chore_log_entries,
+    get_meal_plan_items,
+    get_state,
+    mark_task_completed,
+    record_booked_task,
+    set_state,
+)
 from services.google_calendar import (
     HOUSEHOLD_TZ,
     check_calendar_access,
@@ -14,15 +25,21 @@ from services.google_calendar import (
     default_write_calendar_id,
     delete_event,
     get_configured_calendars,
+    get_event,
     get_week_events,
+    rename_event,
+    update_event,
 )
 from services.schedule import (
+    WEEKDAYS,
     find_slots,
     format_day_label,
     format_time,
     get_week_start,
     has_conflict,
+    normalize_event,
     office_days_in_week,
+    parse_clock_time,
     parse_task_request,
     resolve_day,
 )
@@ -74,14 +91,31 @@ async def refresh_this_week(bot: commands.Bot) -> None:
         calendar_error = str(error)
 
     chores = get_all_chores()
+    personal_name = os.getenv("PERSONAL_NAME")
+    partner_name = os.getenv("PARTNER_NAME")
+    personal_discord_id = os.getenv("PERSONAL_DISCORD_ID")
+    partner_discord_id = os.getenv("PARTNER_DISCORD_ID")
+    chore_fairness = {}
+    for chore in chores:
+        entries = get_chore_log_entries(chore["name"])
+        next_person = fairness_callout(entries, personal_name, partner_name)
+        if next_person:
+            chore_fairness[chore["name"]] = mention_for_person(
+                next_person, personal_name, partner_name, personal_discord_id, partner_discord_id
+            )
+
+    meal_plan_items = get_meal_plan_items(monday)
+
     embed = build_this_week_embed(
         monday,
         events,
         chores,
         now,
         calendar_error=calendar_error,
-        personal_name=os.getenv("PERSONAL_NAME"),
-        partner_name=os.getenv("PARTNER_NAME"),
+        personal_name=personal_name,
+        partner_name=partner_name,
+        chore_fairness=chore_fairness,
+        meal_plan_items=meal_plan_items,
     )
 
     message_id = get_state(THIS_WEEK_MESSAGE_STATE_KEY)
@@ -161,6 +195,7 @@ class UndoTaskButton(discord.ui.Button):
             )
             return
 
+        delete_booked_task(interaction.message.id)
         await refresh_this_week(interaction.client)
         await interaction.edit_original_response(
             content=f"↩️ Removed **{self.task_name}** from the calendar.", view=None
@@ -171,6 +206,31 @@ class UndoTaskView(RequesterOnlyView):
     def __init__(self, task_name: str, event_id: str, calendar_id: str, requester_id: int):
         super().__init__(requester_id)
         self.add_item(UndoTaskButton(task_name, event_id, calendar_id))
+
+
+async def _track_booked_task(
+    interaction: discord.Interaction,
+    message: discord.Message,
+    task_name: str,
+    event_id: str,
+    calendar_id: str,
+) -> None:
+    """Remember which calendar event a confirmation message corresponds to,
+    and pre-add a ✅ reaction so marking it actually done later is a single
+    click instead of the user having to know that's even possible."""
+    record_booked_task(
+        message.id,
+        interaction.channel_id,
+        task_name,
+        event_id,
+        calendar_id,
+        datetime.now(HOUSEHOLD_TZ),
+        interaction.user.display_name,
+    )
+    try:
+        await message.add_reaction("✅")
+    except discord.HTTPException:
+        pass  # not fatal - the user can still add the reaction themselves
 
 
 async def _book_event(
@@ -196,13 +256,16 @@ async def _book_event(
 
     event_id = created.get("id")
     view = UndoTaskView(task_name, event_id, calendar_id, requester_id) if event_id else None
-    await interaction.edit_original_response(
+    message = await interaction.edit_original_response(
         content=(
             f"✅ Added **{task_name}** to the calendar — "
             f"{format_day_label(start.date())} at {format_time(start)}."
         ),
         view=view,
     )
+
+    if event_id:
+        await _track_booked_task(interaction, message, task_name, event_id, calendar_id)
 
 
 async def _confirm_and_book(
@@ -329,6 +392,114 @@ class TaskSlotView(RequesterOnlyView):
         )
 
 
+class EditTaskModal(discord.ui.Modal, title="Edit Task Time"):
+    time_input = discord.ui.TextInput(
+        label="New Time",
+        placeholder="e.g. 5pm or 5:30pm",
+        max_length=20,
+    )
+    day_input = discord.ui.TextInput(
+        label="New Day (optional)",
+        placeholder="e.g. thursday — leave blank to keep the same day",
+        required=False,
+        max_length=20,
+    )
+    duration_input = discord.ui.TextInput(
+        label="Duration in minutes (optional)",
+        placeholder="Leave blank to keep the current duration",
+        required=False,
+        max_length=5,
+    )
+
+    def __init__(self, task: dict, message: discord.Message):
+        super().__init__()
+        self.task = task
+        self.message = message
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        new_time = parse_clock_time(self.time_input.value)
+        if new_time is None:
+            await interaction.followup.send(
+                "❌ I couldn't understand that time — try something like `5pm` or `5:30pm`.",
+                ephemeral=True,
+            )
+            return
+
+        day_text = self.day_input.value.strip().lower()
+        if day_text and day_text not in WEEKDAYS:
+            await interaction.followup.send(
+                f'❌ "{self.day_input.value}" isn\'t a day of the week — try e.g. `thursday`.',
+                ephemeral=True,
+            )
+            return
+
+        duration_text = self.duration_input.value.strip()
+        if duration_text and not duration_text.isdigit():
+            await interaction.followup.send(
+                "❌ Duration needs to be a number of minutes.", ephemeral=True
+            )
+            return
+
+        try:
+            raw_event = get_event(self.task["event_id"], calendar_id=self.task["calendar_id"])
+        except Exception as error:
+            await interaction.followup.send(f"❌ I couldn't look up that event: {error}", ephemeral=True)
+            return
+
+        current = normalize_event(raw_event, "current", household_tz=HOUSEHOLD_TZ)
+        current_duration_minutes = int((current["end"] - current["start"]).total_seconds() // 60)
+
+        today = datetime.now(HOUSEHOLD_TZ).date()
+        target_day = resolve_day(day_text, today) if day_text else current["start"].date()
+        duration_minutes = int(duration_text) if duration_text else current_duration_minutes
+
+        new_start = datetime.combine(target_day, new_time, tzinfo=HOUSEHOLD_TZ)
+        new_end = new_start + timedelta(minutes=duration_minutes)
+
+        week_start = get_week_start(target_day)
+        try:
+            events = get_week_events(week_start)
+        except Exception as error:
+            await interaction.followup.send(f"❌ I couldn't check the calendar: {error}", ephemeral=True)
+            return
+
+        # Exclude the event's own current slot - otherwise it always
+        # "conflicts" with itself.
+        others = [
+            event
+            for event in events
+            if not (event["start"] == current["start"] and event["end"] == current["end"])
+        ]
+        if has_conflict(others, new_start, new_end, HOUSEHOLD_TZ):
+            await interaction.followup.send(
+                "⚠️ That new time conflicts with something else on the calendar — nothing was changed.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            update_event(self.task["event_id"], new_start, new_end, calendar_id=self.task["calendar_id"])
+        except Exception as error:
+            await interaction.followup.send(f"❌ I couldn't update the calendar: {error}", ephemeral=True)
+            return
+
+        await refresh_this_week(interaction.client)
+
+        try:
+            await self.message.edit(
+                content=(
+                    f"✅ **{self.task['task_name']}** rescheduled — "
+                    f"{format_day_label(target_day)} at {format_time(new_start)}."
+                )
+            )
+        except discord.HTTPException:
+            pass
+
+        await interaction.followup.send("✅ Task rescheduled.", ephemeral=True)
+
+
 class Schedule(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -344,6 +515,50 @@ class Schedule(commands.Cog):
     @refresh_this_week_task.before_loop
     async def before_refresh_this_week(self):
         await self.bot.wait_until_ready()
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
+        """Reacting ✅ on a /task or /week confirmation message marks it
+        actually completed - separate from the recurring-chore /done
+        system, since one-off tasks aren't chores. Anyone in the server can
+        do this (not just whoever booked it), matching how either person can
+        do the underlying chore."""
+        if self.bot.user and payload.user_id == self.bot.user.id:
+            return
+        if str(payload.emoji) != "✅":
+            return
+
+        task = get_booked_task(payload.message_id)
+        if task is None:
+            return
+
+        channel = self.bot.get_channel(payload.channel_id)
+        if not isinstance(channel, discord.abc.Messageable):
+            return
+
+        # payload.member is populated directly from the gateway event for
+        # guild reactions - no member-cache lookup (and no members intent)
+        # needed, unlike guild.get_member() which only sees already-cached
+        # members and silently misses everyone else.
+        completed_by = payload.member.display_name if payload.member else "someone"
+
+        result = mark_task_completed(payload.message_id, datetime.now(HOUSEHOLD_TZ), completed_by)
+        if result is None:
+            return  # already marked completed - don't re-fire on a second reaction
+
+        try:
+            message = await channel.fetch_message(payload.message_id)
+            await message.edit(content=f"{message.content}\n✅ Marked done by {completed_by}.", view=None)
+        except discord.HTTPException:
+            pass
+
+        try:
+            rename_event(
+                task["event_id"], f"✅ {task['task_name']}", calendar_id=task["calendar_id"]
+            )
+        except Exception:
+            pass  # not fatal - the Discord message and booked_tasks record still reflect completion
+        await refresh_this_week(self.bot)
 
     @app_commands.command(
         name="refresh_this_week",
@@ -459,11 +674,14 @@ class Schedule(commands.Cog):
                 if event_id
                 else None
             )
-            await interaction.followup.send(
+            message = await interaction.followup.send(
                 f"✅ Added **{parsed['name']}** to the calendar — "
                 f"{format_day_label(target_day)} at {format_time(start)}.",
                 view=view,
+                wait=True,
             )
+            if event_id:
+                await _track_booked_task(interaction, message, parsed["name"], event_id, calendar_id)
             return
 
         try:
@@ -637,5 +855,24 @@ class Schedule(commands.Cog):
             )
 
 
+@app_commands.context_menu(name="Edit Task Time")
+async def edit_task_time(interaction: discord.Interaction, message: discord.Message):
+    task = get_booked_task(message.id)
+    if task is None:
+        await interaction.response.send_message(
+            "❌ This isn't a task message I'm tracking — I can only edit tasks booked via /task or /week.",
+            ephemeral=True,
+        )
+        return
+    if task["completed_at"]:
+        await interaction.response.send_message(
+            "❌ This task is already marked done — nothing to edit.", ephemeral=True
+        )
+        return
+
+    await interaction.response.send_modal(EditTaskModal(task, message))
+
+
 async def setup(bot):
     await bot.add_cog(Schedule(bot))
+    bot.tree.add_command(edit_task_time)

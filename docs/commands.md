@@ -47,9 +47,23 @@ from `#general` or anywhere else.
 |---|---|
 | `/done <chore>` | Log a chore as completed (autocomplete search by name). Optionally attribute it to someone else instead of yourself, or backdate it with `days_ago` (e.g. 3 for "3 days ago"). Chore reminders post automatically in #nudges at 9am and 5pm once a chore passes its threshold. |
 | `/undo_done <chore>` | Remove the most recent `/done` you logged for a chore, reverting its current state to whatever history remains. |
-| `/chore_stats` | Chore board size, overdue/coming-up counts, the single most overdue chore, and a cumulative completions-per-person breakdown from the full chore history. |
-| `/weekly_digest` | Manually post the weekly recap (chores completed and by whom, leaderboard, still overdue) instead of waiting for the automatic Sunday 8pm post. |
+| `/chore_stats` | Chore board size, overdue/coming-up counts, the single most overdue chore, a completions-per-person breakdown both all-time and over the last 30 days, and a "Whose Turn?" callout for any chore one person has done 3+ times in a row. |
+| `/weekly_digest` | Manually post the weekly recap (chores completed and by whom, one-off tasks completed, combined leaderboard, still overdue) instead of waiting for the automatic Sunday 8pm post. |
 | `/random_chore` | Suggest what to do today, weighted toward whatever's most overdue. Congratulates you if nothing's currently overdue. |
+
+## 🛍️ House Wishlist
+
+| Command | What it does |
+|---|---|
+| `/want <url>` | Add a link to the house wishlist — pulls the title, image, and price from the page when available and posts it as a card. React ✅ once it's bought to mark it off (anyone can). |
+| `/wishlist` | See everything still on the wishlist, oldest first. |
+
+## 🍽️ Meal Plan
+
+| Command | What it does |
+|---|---|
+| `/plan_meal <meal> <recipe>` | Add a recipe to this week's Breakfast/Lunch/Dinner list — deliberately *not* tied to a specific day, since dinner plans shift (takeout, forgot to defrost, ran out of an ingredient). Autocomplete suggests your saved recipes, but you can type anything. Shows up in the "🍽️ This Week's Food" section of #this-week, and auto-clears every Monday. |
+| `/clear_meal_plan` | Clear this week's food list and start over. |
 
 ## 📅 Schedule
 
@@ -57,7 +71,20 @@ from `#general` or anywhere else.
 |---|---|
 | `/task <request>` | Schedule a quick one-off task. `/task call vet` finds a free slot anywhere this week; `/task call vet thursday` finds a free slot that day; `/task call vet thursday at 5pm` skips the proposal and adds it straight to the calendar. Proposals show Confirm / Pick Different Time buttons — only the person who ran the command can respond. |
 | `/week` | Schedule up to 5 one-off tasks this week in one go — 5 separate text fields, each with autocomplete suggesting your real chore names as you type (you can still type anything). Proposes a free slot for each, each with its own Confirm / Pick Different Time buttons. |
-| `/refresh_this_week` | Manually rebuild the single #this-week schedule embed (events across every configured calendar, deduplicated, plus chore status) instead of waiting for the daily 6am refresh. |
+| `/refresh_this_week` | Manually rebuild the single #this-week schedule embed (events across every configured calendar, deduplicated, chore status, this week's food plan) instead of waiting for the daily 6am refresh. |
+| **Edit Task Time** (right-click a confirmation message → Apps) | Change an already-booked task's time, day, and/or duration in place, instead of undoing and rebooking it. |
+
+Once a task is booked, its confirmation message gets a ✅ reaction pre-added — react to
+it once you've actually done the task to mark it completed (anyone in the server can,
+not just whoever booked it). This also prefixes the event's title on the calendar
+itself with ✅, so it's visibly distinguished if you check Google Calendar directly.
+
+Overdue/coming-up chores on #this-week (and the "Whose Turn?" list in `/chore_stats`,
+and the `#nudges` reminder) get a "whose turn?" callout whenever one household member
+has logged a chore's last 3+ completions in a row (only when `PERSONAL_NAME`/
+`PARTNER_NAME` are both configured) — a nudge to keep chores from quietly settling
+onto one person. If `PERSONAL_DISCORD_ID`/`PARTNER_DISCORD_ID` are also set, it's a
+real @-mention that pings them; otherwise it just prints their name.
 
 ## ⚙️ Admin
 

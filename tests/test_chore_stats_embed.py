@@ -58,12 +58,42 @@ class BuildChoreStatsEmbedTests(unittest.TestCase):
         stats = _stats(by_person={"Sam": 1, "Alex": 3})
         embed = build_chore_stats_embed(stats)
         fields = {field.name: field.value for field in embed.fields}
-        value = fields["🏆 Chores Completed"]
+        value = fields["🏆 All-Time"]
         self.assertLess(value.index("Alex"), value.index("Sam"))
 
     def test_no_by_person_field_when_empty(self):
         embed = build_chore_stats_embed(_stats(by_person={}))
-        self.assertNotIn("🏆 Chores Completed", {f.name for f in embed.fields})
+        self.assertNotIn("🏆 All-Time", {f.name for f in embed.fields})
+
+    def test_by_person_month_sorted_descending(self):
+        stats = _stats(by_person_month={"Sam": 1, "Alex": 3})
+        embed = build_chore_stats_embed(stats)
+        fields = {field.name: field.value for field in embed.fields}
+        value = fields["📅 Last 30 Days"]
+        self.assertLess(value.index("Alex"), value.index("Sam"))
+
+    def test_no_by_person_month_field_when_empty(self):
+        embed = build_chore_stats_embed(_stats(by_person_month={}))
+        self.assertNotIn("📅 Last 30 Days", {f.name for f in embed.fields})
+
+    def test_no_by_person_month_field_when_absent(self):
+        embed = build_chore_stats_embed(_stats())
+        self.assertNotIn("📅 Last 30 Days", {f.name for f in embed.fields})
+
+    def test_fairness_callouts_field_when_present(self):
+        stats = _stats(fairness_callouts=[{"chore": "Vacuum stairs", "next_person": "Joe"}])
+        embed = build_chore_stats_embed(stats)
+        fields = {field.name: field.value for field in embed.fields}
+        self.assertIn("Vacuum stairs", fields["🔁 Whose Turn?"])
+        self.assertIn("Joe's turn", fields["🔁 Whose Turn?"])
+
+    def test_no_fairness_callouts_field_when_absent(self):
+        embed = build_chore_stats_embed(_stats())
+        self.assertNotIn("🔁 Whose Turn?", {f.name for f in embed.fields})
+
+    def test_no_fairness_callouts_field_when_empty(self):
+        embed = build_chore_stats_embed(_stats(fairness_callouts=[]))
+        self.assertNotIn("🔁 Whose Turn?", {f.name for f in embed.fields})
 
 
 if __name__ == "__main__":

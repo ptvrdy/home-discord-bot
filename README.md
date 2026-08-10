@@ -213,6 +213,19 @@ commands are confined to that channel; otherwise they work anywhere.
 - Clicking Confirm re-checks the calendar one more time first, in case something
   else got booked in that slot since it was proposed — if so, nothing is added
   and you're asked to run the command again instead of silently double-booking.
+- Once a task is booked, the confirmation message gets a **✅ reaction pre-added**
+  to it — react to it (anyone in the server, not just whoever booked it) once
+  you've actually done the task to mark it completed. This is separate from the
+  recurring-chore `/done` system, since one-off tasks aren't chores; it appends a
+  "Marked done by X" note, removes the Undo button, and prefixes the event's
+  title on the calendar itself with ✅ (so it's visibly distinguished if you look
+  at Google Calendar directly, outside Discord) — `#this-week` picks up the new
+  title on its next refresh, same as any other event name change.
+- To change an already-booked task's time or duration without cancelling and
+  redoing it, right-click (or long-press on mobile) its confirmation message →
+  **Apps → Edit Task Time**. A form asks for a new time, optionally a new day
+  and/or duration (blank keeps the current value for each), re-checks for a
+  conflict at the new time, and updates the calendar event in place.
 
 ## Google Calendar setup
 
@@ -368,6 +381,8 @@ tests/                       Unit tests (unittest) for the services above
    TASK_CALENDAR_ID=abc123@group.calendar.google.com          # optional, defaults to the Family calendar
    PERSONAL_NAME=YourName                                     # optional, enables office/home status - see #this-week
    PARTNER_NAME=PartnerName                                   # optional, enables office/home status - see #this-week
+   PERSONAL_DISCORD_ID=123456789012345678                     # optional, pings you by name in chore fairness callouts
+   PARTNER_DISCORD_ID=123456789012345678                      # optional, pings your partner in chore fairness callouts
    ```
    `RECIPE_FORUM_ID` is the channel ID of your Discord **forum channel** where
    recipes get posted. The bot needs forum tags matching your logical tags
@@ -379,6 +394,12 @@ tests/                       Unit tests (unittest) for the services above
    `NUDGES_CHANNEL_ID` is the channel ID of a plain text channel (e.g. `#nudges`)
    where overdue-chore reminders get posted. Without it, `/done` still works —
    the background nudge check just has nowhere to post, so it silently no-ops.
+
+   `PERSONAL_DISCORD_ID`/`PARTNER_DISCORD_ID` are Discord **user IDs** (a numeric
+   snowflake, not a username) — enable Developer Mode in Discord (User Settings →
+   Advanced), then right-click your name and pick "Copy User ID". Without these
+   set, the chore fairness callout still works, it just prints the plain name
+   instead of pinging.
 3. Run the bot:
    ```
    python bot.py
@@ -412,21 +433,20 @@ second.
   `/week` scheduling flows (including a Cancel button on every proposal), ✅
   office-day-aware scheduling (5pm-only proposals on a day either person is
   marked in-office, plus an office/home status line on `#this-week`), ✅
-  `/chore_stats`, ✅ a trash/recycling/compost line on `#this-week` driven by
+  `/chore_stats` (with a windowed "last 30 days" view alongside all-time), ✅ a
+  trash/recycling/compost line on `#this-week` driven by
   `config/waste_schedule.py`, ✅ a chore history table + `/undo_done`, ✅ a
-  weekly digest, ✅ `/random_chore`, ✅ the pre-booking conflict re-check,
-  ✅ per-task duration + undoing an already-confirmed booking, ✅ automatic
-  rollover into next week when the current week has no time left. All
-  originally-scoped pieces are built. A couple of scope notes on what's done:
-  - The chore history table (`chore_log`) gives `/chore_stats` real
-    cumulative totals instead of a last-completer snapshot, but there's no
-    windowed view yet (e.g. "this month" specifically) — only all-time.
-  - The weekly digest only covers recurring chores, not one-off `/task`/`/week`
-    items, since there's currently no way to tell a bot-booked calendar event
-    apart from any other event on the calendar.
-
-  Possible next steps if useful later:
-  - Mark a one-off `/task`/`/week` item as actually completed via a ✅ reaction on
-    its confirmation message, separate from the recurring-chore `/done` system
-  - Editing an already-confirmed task/event (time or duration) from Discord,
-    rather than only being able to undo it and start over
+  weekly digest (recurring chores AND one-off `/task`/`/week` completions,
+  combined leaderboard), ✅ `/random_chore`, ✅ the pre-booking conflict
+  re-check, ✅ per-task duration + undoing an already-confirmed booking, ✅
+  automatic rollover into next week when the current week has no time left,
+  ✅ marking a one-off task done via a ✅ reaction, ✅ editing an
+  already-confirmed task's time/duration in place, ✅ a chore fairness
+  callout ("Whose Turn?") when one person logs a chore's last 3+
+  completions in a row, shown on `#this-week`, `/chore_stats`, and in the
+  `#nudges` reminder, ✅ a house wishlist (`/want`, `/wishlist`, ✅ reaction to
+  mark bought) with best-effort title/image/price scraping from any link,
+  ✅ a weekly meal plan (`/plan_meal`, `/clear_meal_plan`) shown as a
+  Breakfast/Lunch/Dinner list on `#this-week`, deliberately not tied to a
+  specific day. Every originally-scoped and subsequently requested piece is
+  built.

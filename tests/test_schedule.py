@@ -14,6 +14,7 @@ from services.schedule import (
     normalize_event,
     office_days_in_week,
     office_event_name,
+    parse_clock_time,
     parse_task_request,
     resolve_day,
 )
@@ -289,6 +290,31 @@ class ParseTaskRequestTests(unittest.TestCase):
         parsed = parse_task_request("wipe out the fridge thursday")
         self.assertEqual(parsed["name"], "wipe out the fridge")
         self.assertEqual(parsed["day"], "thursday")
+
+
+class ParseClockTimeTests(unittest.TestCase):
+    def test_pm_time(self):
+        self.assertEqual(parse_clock_time("5pm"), time(17, 0))
+
+    def test_am_time_with_minutes(self):
+        self.assertEqual(parse_clock_time("9:30am"), time(9, 30))
+
+    def test_is_case_insensitive(self):
+        self.assertEqual(parse_clock_time("5PM"), time(17, 0))
+
+    def test_tolerates_surrounding_whitespace(self):
+        self.assertEqual(parse_clock_time("  5pm  "), time(17, 0))
+
+    def test_noon_and_midnight(self):
+        self.assertEqual(parse_clock_time("12am"), time(0, 0))
+        self.assertEqual(parse_clock_time("12pm"), time(12, 0))
+
+    def test_returns_none_for_garbage(self):
+        self.assertIsNone(parse_clock_time("whenever"))
+
+    def test_returns_none_when_embedded_in_a_sentence(self):
+        # Must be the whole string, not embedded like parse_task_request allows.
+        self.assertIsNone(parse_clock_time("call vet at 5pm"))
 
 
 class ResolveDayTests(unittest.TestCase):

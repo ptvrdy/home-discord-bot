@@ -14,8 +14,10 @@ from services.schedule import format_event_sources, format_time, is_office_day, 
 SCHEDULE_COLOR = 0x2E6F40
 DAY_FIELD_LIMIT = 1024
 CHORE_FIELD_LIMIT = 1024
+FOOD_FIELD_LIMIT = 1024
 OFFICE_EMOJI = "🏢"
 HOME_EMOJI = "🏠"
+MEAL_TYPES = (("breakfast", "🍳 Breakfast"), ("lunch", "🥪 Lunch"), ("dinner", "🍽️ Dinner"))
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -36,7 +38,10 @@ def _event_sort_key(event: dict):
 
 def _format_event_line(event: dict) -> str:
     label = "All day" if event["all_day"] else format_time(event["start"])
-    name = f"[{event['name']} ↗]({event['url']})" if event.get("url") else event["name"]
+    # ↗ (U+2197) has both a plain-text and an emoji-colored glyph; Discord
+    # defaults to the emoji form unless the text-presentation variation
+    # selector (U+FE0E) follows it.
+    name = f"[{event['name']} ↗︎]({event['url']})" if event.get("url") else event["name"]
     return f"{label} — **{name}** {format_event_sources(event['sources'])}"
 
 
@@ -60,6 +65,31 @@ def _waste_line(day: date) -> str | None:
     return WASTE_SCHEDULE.get(day.weekday())
 
 
+def _fairness_suffix(chore: dict, chore_fairness: dict[str, str]) -> str:
+    next_person = chore_fairness.get(chore["name"])
+    return f" — {next_person}'s turn?" if next_person else ""
+
+
+def _meal_plan_field_value(meal_plan_items: list[dict]) -> str:
+    """Group this week's Breakfast/Lunch/Dinner picks by meal - deliberately
+    not tied to a specific day, since the whole point is a flexible "here's
+    what we're thinking" list rather than a rigid schedule."""
+    grouped: dict[str, list[str]] = {}
+    for item in meal_plan_items:
+        grouped.setdefault(item["meal_type"], []).append(item["recipe_title"])
+
+    sections = []
+    for meal_type, label in MEAL_TYPES:
+        recipes = grouped.get(meal_type, [])
+        if recipes:
+            lines = "\n".join(f"• {title}" for title in recipes)
+            sections.append(f"**{label}**\n{lines}")
+
+    if not sections:
+        return "_Nothing planned yet — /plan_meal to add one_"
+    return "\n\n".join(sections)
+
+
 def build_this_week_embed(
     monday: date,
     events: list[dict],
@@ -68,6 +98,8 @@ def build_this_week_embed(
     calendar_error: str | None = None,
     personal_name: str | None = None,
     partner_name: str | None = None,
+    chore_fairness: dict[str, str] | None = None,
+    meal_plan_items: list[dict] | None = None,
 ) -> discord.Embed:
     sunday = monday + timedelta(days=6)
     embed = discord.Embed(
@@ -107,18 +139,25 @@ def build_this_week_embed(
         value = _truncate("\n".join(parts), DAY_FIELD_LIMIT)
         embed.add_field(name=day.strftime("%A, %b %d"), value=value, inline=False)
 
+    embed.add_field(
+        name="🍽️ This Week's Food",
+        value=_truncate(_meal_plan_field_value(meal_plan_items or []), FOOD_FIELD_LIMIT),
+        inline=False,
+    )
+
+    chore_fairness = chore_fairness or {}
     overdue_chores = [chore for chore in chores if is_overdue(chore, now)]
     upcoming_chores = chores_due_soon(chores, now)
 
     if overdue_chores:
-        lines = [f"🔴 **{chore['name']}**" for chore in overdue_chores]
+        lines = [f"🔴 **{chore['name']}**{_fairness_suffix(chore, chore_fairness)}" for chore in overdue_chores]
         embed.add_field(
             name="🧹 Chores Overdue",
             value=_truncate("\n".join(lines), CHORE_FIELD_LIMIT),
             inline=False,
         )
     if upcoming_chores:
-        lines = [f"🟡 **{chore['name']}**" for chore in upcoming_chores]
+        lines = [f"🟡 **{chore['name']}**{_fairness_suffix(chore, chore_fairness)}" for chore in upcoming_chores]
         embed.add_field(
             name="🧹 Coming Up",
             value=_truncate("\n".join(lines), CHORE_FIELD_LIMIT),

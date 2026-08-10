@@ -41,6 +41,14 @@ def format_day_label(day: date) -> str:
     return day.strftime("%A, %b %d")
 
 
+def _build_time(hour_str: str, minute_str: str | None, period: str) -> time:
+    hour = int(hour_str) % 12
+    minute = int(minute_str or 0)
+    if period.lower() == "pm":
+        hour += 12
+    return time(hour, minute)
+
+
 def parse_task_request(text: str) -> dict:
     """Parse the free text after /task into {"name", "day", "time"}.
 
@@ -57,11 +65,7 @@ def parse_task_request(text: str) -> dict:
     )
     parsed_time = None
     if time_match:
-        hour = int(time_match.group(1)) % 12
-        minute = int(time_match.group(2) or 0)
-        if time_match.group(3).lower() == "pm":
-            hour += 12
-        parsed_time = time(hour, minute)
+        parsed_time = _build_time(time_match.group(1), time_match.group(2), time_match.group(3))
         remaining = remaining[: time_match.start()]
 
     day_match = re.search(r"\s+(" + "|".join(WEEKDAYS) + r")\s*$", remaining, re.IGNORECASE)
@@ -71,6 +75,18 @@ def parse_task_request(text: str) -> dict:
         remaining = remaining[: day_match.start()]
 
     return {"name": remaining.strip(), "day": day, "time": parsed_time}
+
+
+def parse_clock_time(text: str) -> time | None:
+    """Parse a standalone "5pm" / "5:30pm" style time (no leading "at", not
+    embedded in a larger sentence - the whole string must be just the time)
+    into a datetime.time, or None if it doesn't match. Used by the "edit
+    task" modal, which asks for a time on its own rather than a free-text
+    request."""
+    match = re.fullmatch(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)", text.strip(), re.IGNORECASE)
+    if not match:
+        return None
+    return _build_time(match.group(1), match.group(2), match.group(3))
 
 
 def resolve_day(day_name: str | None, today: date) -> date | None:

@@ -45,7 +45,21 @@ def build_chore_stats_embed(stats: dict) -> discord.Embed:
             f"{name}: {count}"
             for name, count in sorted(stats["by_person"].items(), key=lambda pair: -pair[1])
         ]
-        embed.add_field(name="🏆 Chores Completed", value="\n".join(lines), inline=True)
+        embed.add_field(name="🏆 All-Time", value="\n".join(lines), inline=True)
+
+    if stats.get("by_person_month"):
+        lines = [
+            f"{name}: {count}"
+            for name, count in sorted(stats["by_person_month"].items(), key=lambda pair: -pair[1])
+        ]
+        embed.add_field(name="📅 Last 30 Days", value="\n".join(lines), inline=True)
+
+    if stats.get("fairness_callouts"):
+        lines = [
+            f"🔁 **{callout['chore']}** — {callout['next_person']}'s turn"
+            for callout in stats["fairness_callouts"]
+        ]
+        embed.add_field(name="🔁 Whose Turn?", value="\n".join(lines), inline=False)
 
     embed.set_footer(text="🏠 Household Hub")
     return embed
