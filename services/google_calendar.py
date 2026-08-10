@@ -186,3 +186,16 @@ def create_event(
         "end": {"dateTime": end.isoformat()},
     }
     return service.events().insert(calendarId=calendar_id, body=body).execute()
+
+
+def delete_event(
+    event_id: str,
+    calendar_id: str | None = None,
+    service=None,
+) -> None:
+    """Delete an event by ID - used to undo an already-confirmed /task or
+    /week booking. Defaults to default_write_calendar_id() when no calendar
+    is specified, matching where create_event() would have put it."""
+    service = service or get_service()
+    calendar_id = calendar_id or default_write_calendar_id()
+    service.events().delete(calendarId=calendar_id, eventId=event_id).execute()

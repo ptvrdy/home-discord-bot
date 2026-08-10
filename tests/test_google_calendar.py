@@ -6,6 +6,7 @@ from services.google_calendar import (
     check_calendar_access,
     create_event,
     default_write_calendar_id,
+    delete_event,
     get_configured_calendars,
     get_week_events,
     list_events,
@@ -246,6 +247,24 @@ class CreateEventTests(unittest.TestCase):
                 "end": {"dateTime": end.isoformat()},
             },
         )
+
+
+class DeleteEventTests(unittest.TestCase):
+    def test_deletes_the_event_on_the_given_calendar(self):
+        service = MagicMock()
+
+        delete_event("event-123", calendar_id="fam@example.com", service=service)
+
+        service.events().delete.assert_any_call(calendarId="fam@example.com", eventId="event-123")
+
+    def test_uses_default_write_calendar_when_not_specified(self):
+        env = {"FAMILY_CALENDAR_ID": "fam@example.com"}
+        service = MagicMock()
+
+        with patch.dict("os.environ", env, clear=True):
+            delete_event("event-123", service=service)
+
+        service.events().delete.assert_any_call(calendarId="fam@example.com", eventId="event-123")
 
 
 if __name__ == "__main__":

@@ -190,16 +190,22 @@ commands are confined to that channel; otherwise they work anywhere.
   other even before any of them are confirmed.
 - New events go on the shared **Family** calendar by default (or whichever calendar
   is configured if Family isn't set), overridable via `TASK_CALENDAR_ID` in `.env`.
-- Default task duration is a fixed 30 minutes — there's no per-task duration input
-  yet.
+- Task duration defaults to 30 minutes, adjustable via the `duration_minutes` option
+  (5–480 minutes) — one value per `/task` call, or one shared value applied to the
+  whole batch for `/week`.
 - Slot proposals never land in the past — "somewhere this week" only considers the
-  current moment onward, never earlier today or an already-past day.
+  current moment onward, never earlier today or an already-past day. If the current
+  Monday–Sunday week has no room left at all (genuinely full, or simply out of time
+  — e.g. it's already past 8pm on Sunday), the search automatically rolls over into
+  next week instead of failing; the proposal notes "(next week)" when that happens.
 - When no specific day is requested and more than one slot is being proposed (the
   3 "Pick Different Time" alternatives, or multiple `/week` tasks in one call),
   results are spread across different days first rather than clustering into the
   same afternoon.
 - Every proposal has a **Cancel** button alongside Confirm / Pick Different Time —
-  a graceful way to back out without adding anything to the calendar.
+  a graceful way to back out without adding anything to the calendar. Once
+  confirmed, the message instead shows an **Undo** button, so you can also remove
+  an already-booked event without having to do it manually in Google Calendar.
 - On any day flagged as an office day for either person (see the `#this-week`
   section above for how those are detected), proposals don't start until 5pm
   instead of 9am — the assumption being that either of you might not be home
@@ -408,31 +414,19 @@ second.
   marked in-office, plus an office/home status line on `#this-week`), ✅
   `/chore_stats`, ✅ a trash/recycling/compost line on `#this-week` driven by
   `config/waste_schedule.py`, ✅ a chore history table + `/undo_done`, ✅ a
-  weekly digest. All originally-scoped pieces are built; possible next steps
-  if useful later:
-  - Per-task duration instead of a fixed 30 minutes; editing or cancelling an
-    already-confirmed task/event from Discord (not just an unconfirmed proposal)
+  weekly digest, ✅ `/random_chore`, ✅ the pre-booking conflict re-check,
+  ✅ per-task duration + undoing an already-confirmed booking, ✅ automatic
+  rollover into next week when the current week has no time left. All
+  originally-scoped pieces are built. A couple of scope notes on what's done:
+  - The chore history table (`chore_log`) gives `/chore_stats` real
+    cumulative totals instead of a last-completer snapshot, but there's no
+    windowed view yet (e.g. "this month" specifically) — only all-time.
+  - The weekly digest only covers recurring chores, not one-off `/task`/`/week`
+    items, since there's currently no way to tell a bot-booked calendar event
+    apart from any other event on the calendar.
+
+  Possible next steps if useful later:
   - Mark a one-off `/task`/`/week` item as actually completed via a ✅ reaction on
     its confirmation message, separate from the recurring-chore `/done` system
-  - ✅ A proper chore history table (`chore_log`, parallel to `cooking_log`)
-    logging every `/done` as its own row instead of overwriting one "last
-    done" field per chore — `/chore_stats`' per-person breakdown is now a
-    real cumulative total, not a last-completer snapshot. Still open: totals
-    over a specific time window (e.g. "this month") rather than all-time.
-  - ✅ `/undo_done` to walk back a mistaken `/done`
-  - ✅ A weekly digest (Sunday 8pm, or `/weekly_digest` on demand) recapping
-    the *previous* week — chores completed and by whom, a per-person
-    leaderboard, and what's still overdue — as the backward-looking
-    counterpart to `#this-week`'s forward-looking view. Scope note: this only
-    covers recurring chores, not one-off `/task`/`/week` items, since there's
-    currently no way to tell a bot-booked calendar event apart from any other
-    event on the calendar.
-  - ✅ `/random_chore` — suggest what to do today, weighted toward whatever's
-    most overdue (never-done chores use their own threshold as a baseline
-    weight, since there's no way to know how overdue they truly are).
-    Returns nothing/congratulates you if nothing's currently overdue.
-  - ✅ Before actually booking a `/task`/`/week` confirmation, re-check the
-    calendar one more time for a conflict that appeared between the proposal
-    and the click — if something else got booked in that slot meanwhile,
-    nothing is added and you're asked to run the command again for a fresh
-    time, instead of silently double-booking.
+  - Editing an already-confirmed task/event (time or duration) from Discord,
+    rather than only being able to undo it and start over

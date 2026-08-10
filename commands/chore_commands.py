@@ -19,8 +19,10 @@ from services.database import (
     get_chore_completions_between,
     get_chore_completions_by_person,
     get_chore_names,
+    get_state,
     mark_chore_done,
     mark_nudge_sent,
+    set_state,
     undo_last_done,
 )
 from services.schedule import get_week_start
@@ -41,6 +43,7 @@ HOUSEHOLD_TZ = _household_timezone()
 NUDGE_TIMES = [time(9, 0, tzinfo=HOUSEHOLD_TZ), time(17, 0, tzinfo=HOUSEHOLD_TZ)]
 WEEKLY_DIGEST_TIME = time(20, 0, tzinfo=HOUSEHOLD_TZ)  # checked daily, only posts on Sunday
 WEEKLY_DIGEST_WEEKDAY = 6  # Sunday, per date.weekday() (Monday=0 ... Sunday=6)
+WEEKLY_DIGEST_MESSAGE_STATE_KEY = "weekly_digest_message_id"
 
 
 async def chore_name_autocomplete(
@@ -52,10 +55,11 @@ async def chore_name_autocomplete(
 
 
 async def post_weekly_digest(bot: commands.Bot) -> None:
-    """Post a recap of the week that just ended (chores completed and by
-    whom, plus what's still overdue) to the same channel #this-week lives
-    in. Shared by the scheduled Sunday-night post and the manual
-    /weekly_digest command."""
+    """Rebuild and post/edit the single weekly digest message (chores done
+    last week, still overdue) in the same channel #this-week lives in -
+    edited in place every week, never a new message, exactly like #this-week
+    itself. Shared by the scheduled Sunday-night post and the manual
+    /weekly_digest command so both paths can never drift out of sync."""
     channel_id = os.getenv("THIS_WEEK_CHANNEL_ID")
     if not channel_id:
         return
@@ -74,7 +78,18 @@ async def post_weekly_digest(bot: commands.Bot) -> None:
     completions = get_chore_completions_between(range_start, range_end)
     chores = get_all_chores()
     embed = build_weekly_digest_embed(last_week_start, completions, chores, now)
-    await channel.send(embed=embed)
+
+    message_id = get_state(WEEKLY_DIGEST_MESSAGE_STATE_KEY)
+    if message_id:
+        try:
+            message = await channel.fetch_message(int(message_id))
+            await message.edit(embed=embed)
+            return
+        except discord.NotFound:
+            pass  # the message was deleted; fall through and repost it
+
+    message = await channel.send(embed=embed)
+    set_state(WEEKLY_DIGEST_MESSAGE_STATE_KEY, str(message.id))
 
 
 class Chores(commands.Cog):

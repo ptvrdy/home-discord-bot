@@ -11,6 +11,8 @@ from services.google_calendar import (
     HOUSEHOLD_TZ,
     check_calendar_access,
     create_event,
+    default_write_calendar_id,
+    delete_event,
     get_configured_calendars,
     get_week_events,
 )
@@ -30,6 +32,8 @@ from services.this_week_embed import build_this_week_embed
 THIS_WEEK_MESSAGE_STATE_KEY = "this_week_message_id"
 THIS_WEEK_REFRESH_TIME = time(6, 0, tzinfo=HOUSEHOLD_TZ)
 DEFAULT_TASK_DURATION_MINUTES = 30
+MIN_TASK_DURATION_MINUTES = 5
+MAX_TASK_DURATION_MINUTES = 480
 
 
 def _household_names() -> list[str]:
@@ -137,12 +141,77 @@ class CancelButton(discord.ui.Button):
         )
 
 
+class UndoTaskButton(discord.ui.Button):
+    """Undoes an already-confirmed /task or /week booking - not just an
+    unconfirmed proposal (that's what CancelButton is for)."""
+
+    def __init__(self, task_name: str, event_id: str, calendar_id: str):
+        super().__init__(label="Undo", style=discord.ButtonStyle.danger)
+        self.task_name = task_name
+        self.event_id = event_id
+        self.calendar_id = calendar_id
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        try:
+            delete_event(self.event_id, calendar_id=self.calendar_id)
+        except Exception as error:
+            await interaction.edit_original_response(
+                content=f"❌ I couldn't remove that from the calendar: {error}", view=None
+            )
+            return
+
+        await refresh_this_week(interaction.client)
+        await interaction.edit_original_response(
+            content=f"↩️ Removed **{self.task_name}** from the calendar.", view=None
+        )
+
+
+class UndoTaskView(RequesterOnlyView):
+    def __init__(self, task_name: str, event_id: str, calendar_id: str, requester_id: int):
+        super().__init__(requester_id)
+        self.add_item(UndoTaskButton(task_name, event_id, calendar_id))
+
+
+async def _book_event(
+    interaction: discord.Interaction,
+    task_name: str,
+    start: datetime,
+    end: datetime,
+    requester_id: int,
+) -> None:
+    """Create the event and swap in an Undo button for it. Shared by every
+    path that actually books something (proposal-confirmed or straight-to-
+    calendar exact-time), so undo works the same way everywhere."""
+    calendar_id = default_write_calendar_id()
+    try:
+        created = create_event(task_name, start, end, calendar_id=calendar_id)
+    except Exception as error:
+        await interaction.edit_original_response(
+            content=f"❌ I couldn't add that to the calendar: {error}", view=None
+        )
+        return
+
+    await refresh_this_week(interaction.client)
+
+    event_id = created.get("id")
+    view = UndoTaskView(task_name, event_id, calendar_id, requester_id) if event_id else None
+    await interaction.edit_original_response(
+        content=(
+            f"✅ Added **{task_name}** to the calendar — "
+            f"{format_day_label(start.date())} at {format_time(start)}."
+        ),
+        view=view,
+    )
+
+
 async def _confirm_and_book(
     interaction: discord.Interaction,
     task_name: str,
     start: datetime,
     end: datetime,
     week_start,
+    requester_id: int,
 ) -> None:
     """Shared by TaskSlotView.confirm and TaskAlternativeButton: re-check the
     calendar for a conflict that appeared since this slot was proposed
@@ -166,35 +235,23 @@ async def _confirm_and_book(
         )
         return
 
-    try:
-        create_event(task_name, start, end)
-    except Exception as error:
-        await interaction.edit_original_response(
-            content=f"❌ I couldn't add that to the calendar: {error}", view=None
-        )
-        return
-
-    await refresh_this_week(interaction.client)
-    await interaction.edit_original_response(
-        content=(
-            f"✅ Added **{task_name}** to the calendar — "
-            f"{format_day_label(start.date())} at {format_time(start)}."
-        ),
-        view=None,
-    )
+    await _book_event(interaction, task_name, start, end, requester_id)
 
 
 class TaskAlternativeButton(discord.ui.Button):
-    def __init__(self, task_name: str, start: datetime, end: datetime, week_start):
+    def __init__(self, task_name: str, start: datetime, end: datetime, week_start, requester_id: int):
         super().__init__(label=f"{start.strftime('%a')} {format_time(start)}", style=discord.ButtonStyle.primary)
         self.task_name = task_name
         self.start = start
         self.end = end
         self.week_start = week_start
+        self.requester_id = requester_id
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer()
-        await _confirm_and_book(interaction, self.task_name, self.start, self.end, self.week_start)
+        await _confirm_and_book(
+            interaction, self.task_name, self.start, self.end, self.week_start, self.requester_id
+        )
 
 
 class TaskAlternativesView(RequesterOnlyView):
@@ -207,7 +264,7 @@ class TaskAlternativesView(RequesterOnlyView):
     ):
         super().__init__(requester_id)
         for start, end in alternatives:
-            self.add_item(TaskAlternativeButton(task_name, start, end, week_start))
+            self.add_item(TaskAlternativeButton(task_name, start, end, week_start, requester_id))
         self.add_item(CancelButton(task_name))
 
 
@@ -232,7 +289,9 @@ class TaskSlotView(RequesterOnlyView):
     @discord.ui.button(label="Confirm", style=discord.ButtonStyle.success)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
-        await _confirm_and_book(interaction, self.task_name, self.start, self.end, self.week_start)
+        await _confirm_and_book(
+            interaction, self.task_name, self.start, self.end, self.week_start, self.requester_id
+        )
 
     @discord.ui.button(label="Pick Different Time", style=discord.ButtonStyle.secondary)
     async def pick_different(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -349,9 +408,17 @@ class Schedule(commands.Cog):
         description='Schedule a quick one-off task, e.g. "call vet" or "call vet thursday at 5pm"',
     )
     @app_commands.describe(
-        request='e.g. "call vet", "call vet thursday", or "call vet thursday at 5pm"'
+        request='e.g. "call vet", "call vet thursday", or "call vet thursday at 5pm"',
+        duration_minutes="Optional: how long it takes, in minutes (default 30)",
     )
-    async def task(self, interaction: discord.Interaction, request: str):
+    async def task(
+        self,
+        interaction: discord.Interaction,
+        request: str,
+        duration_minutes: app_commands.Range[
+            int, MIN_TASK_DURATION_MINUTES, MAX_TASK_DURATION_MINUTES
+        ] = DEFAULT_TASK_DURATION_MINUTES,
+    ):
         if not _in_schedule_builder(interaction):
             await interaction.response.send_message(
                 "❌ Use this command in #schedule-builder.", ephemeral=True
@@ -377,17 +444,25 @@ class Schedule(commands.Cog):
         if parsed["time"] is not None:
             target_day = day or today
             start = datetime.combine(target_day, parsed["time"], tzinfo=HOUSEHOLD_TZ)
-            end = start + timedelta(minutes=DEFAULT_TASK_DURATION_MINUTES)
+            end = start + timedelta(minutes=duration_minutes)
             try:
-                create_event(parsed["name"], start, end)
+                calendar_id = default_write_calendar_id()
+                created = create_event(parsed["name"], start, end, calendar_id=calendar_id)
             except Exception as error:
                 await interaction.followup.send(f"❌ I couldn't add that to the calendar: {error}")
                 return
 
             await refresh_this_week(self.bot)
+            event_id = created.get("id")
+            view = (
+                UndoTaskView(parsed["name"], event_id, calendar_id, interaction.user.id)
+                if event_id
+                else None
+            )
             await interaction.followup.send(
                 f"✅ Added **{parsed['name']}** to the calendar — "
-                f"{format_day_label(target_day)} at {format_time(start)}."
+                f"{format_day_label(target_day)} at {format_time(start)}.",
+                view=view,
             )
             return
 
@@ -397,27 +472,51 @@ class Schedule(commands.Cog):
             await interaction.followup.send(f"❌ I couldn't check the calendar: {error}")
             return
 
+        search_week_start = week_start
         slots = find_slots(
             events,
-            week_start,
-            DEFAULT_TASK_DURATION_MINUTES,
+            search_week_start,
+            duration_minutes,
             HOUSEHOLD_TZ,
             day=day,
             count=1,
             now=now,
-            office_days=_office_days_this_week(events, week_start),
+            office_days=_office_days_this_week(events, search_week_start),
         )
+
+        # No specific day was requested and this week's out of room (either
+        # genuinely fully booked, or - late on a Sunday - simply out of time
+        # left in the week) - try next week instead of dead-ending.
+        if not slots and day is None:
+            search_week_start = week_start + timedelta(days=7)
+            try:
+                events = get_week_events(search_week_start)
+            except Exception as error:
+                await interaction.followup.send(f"❌ I couldn't check the calendar: {error}")
+                return
+            slots = find_slots(
+                events,
+                search_week_start,
+                duration_minutes,
+                HOUSEHOLD_TZ,
+                day=None,
+                count=1,
+                now=now,
+                office_days=_office_days_this_week(events, search_week_start),
+            )
+
         if not slots:
-            scope = format_day_label(day) if day else "this week"
+            scope = format_day_label(day) if day else "this week or next"
             await interaction.followup.send(
                 f"❌ I couldn't find a free slot for **{parsed['name']}** {scope} — looks fully booked."
             )
             return
 
         start, end = slots[0]
-        view = TaskSlotView(parsed["name"], start, end, day, interaction.user.id, week_start)
+        week_note = "" if search_week_start == week_start else " (next week)"
+        view = TaskSlotView(parsed["name"], start, end, day, interaction.user.id, search_week_start)
         await interaction.followup.send(
-            f"📌 Proposed for **{parsed['name']}**: {format_day_label(start.date())} at "
+            f"📌 Proposed for **{parsed['name']}**: {format_day_label(start.date())}{week_note} at "
             f"{format_time(start)}–{format_time(end)}. Confirm?",
             view=view,
         )
@@ -432,6 +531,7 @@ class Schedule(commands.Cog):
         task_3="Optional: third task",
         task_4="Optional: fourth task",
         task_5="Optional: fifth task",
+        duration_minutes="Optional: how long each task takes, in minutes (default 30, applies to the whole batch)",
     )
     @app_commands.autocomplete(
         task_1=chore_name_autocomplete,
@@ -448,6 +548,9 @@ class Schedule(commands.Cog):
         task_3: str | None = None,
         task_4: str | None = None,
         task_5: str | None = None,
+        duration_minutes: app_commands.Range[
+            int, MIN_TASK_DURATION_MINUTES, MAX_TASK_DURATION_MINUTES
+        ] = DEFAULT_TASK_DURATION_MINUTES,
     ):
         if not _in_schedule_builder(interaction):
             await interaction.response.send_message(
@@ -486,24 +589,52 @@ class Schedule(commands.Cog):
         slots = find_slots(
             events,
             week_start,
-            DEFAULT_TASK_DURATION_MINUTES,
+            duration_minutes,
             HOUSEHOLD_TZ,
             count=len(task_names),
             now=now,
             office_days=_office_days_this_week(events, week_start),
         )
+        assignments = [(name, slot, week_start) for name, slot in zip(task_names, slots)]
 
-        for name, slot in zip(task_names, slots):
+        # Anything that didn't fit this week (genuinely full, or - late on a
+        # Sunday - simply out of time left) rolls over into next week instead
+        # of just being reported as unschedulable.
+        remaining = task_names[len(slots):]
+        if remaining:
+            next_week_start = week_start + timedelta(days=7)
+            try:
+                next_events = get_week_events(next_week_start)
+                next_slots = find_slots(
+                    next_events,
+                    next_week_start,
+                    duration_minutes,
+                    HOUSEHOLD_TZ,
+                    count=len(remaining),
+                    now=now,
+                    office_days=_office_days_this_week(next_events, next_week_start),
+                )
+                assignments += [
+                    (name, slot, next_week_start) for name, slot in zip(remaining, next_slots)
+                ]
+                remaining = remaining[len(next_slots):]
+            except Exception:
+                pass  # fall through; remaining is reported below as-is
+
+        for name, slot, slot_week_start in assignments:
             start, end = slot
-            view = TaskSlotView(name, start, end, None, interaction.user.id, week_start)
+            week_note = "" if slot_week_start == week_start else " (next week)"
+            view = TaskSlotView(name, start, end, None, interaction.user.id, slot_week_start)
             await interaction.followup.send(
-                f"📌 Proposed for **{name}**: {format_day_label(start.date())} at "
+                f"📌 Proposed for **{name}**: {format_day_label(start.date())}{week_note} at "
                 f"{format_time(start)}–{format_time(end)}. Confirm?",
                 view=view,
             )
 
-        for name in task_names[len(slots):]:
-            await interaction.followup.send(f"❌ I couldn't find a free slot for **{name}** this week.")
+        for name in remaining:
+            await interaction.followup.send(
+                f"❌ I couldn't find a free slot for **{name}** this week or next."
+            )
 
 
 async def setup(bot):

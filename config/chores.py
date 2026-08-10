@@ -22,4 +22,6 @@ DEFAULT_CHORES = [
     ("Clean oven", 75),
     ("Vacuum behind furniture", 105),
     ("Wipe baseboards", 75),
+    ("Clean the Cat Fountain", 7),  # weekly, every Saturday
+    ("Replace the Cat Fountain Filter", 21),  # every 3rd Saturday
 ]
