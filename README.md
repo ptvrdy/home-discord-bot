@@ -204,6 +204,9 @@ commands are confined to that channel; otherwise they work anywhere.
   section above for how those are detected), proposals don't start until 5pm
   instead of 9am — the assumption being that either of you might not be home
   during the day, so it's safer to default chores/tasks to after work.
+- Clicking Confirm re-checks the calendar one more time first, in case something
+  else got booked in that slot since it was proposed — if so, nothing is added
+  and you're asked to run the command again instead of silently double-booking.
 
 ## Google Calendar setup
 
@@ -428,7 +431,8 @@ second.
     most overdue (never-done chores use their own threshold as a baseline
     weight, since there's no way to know how overdue they truly are).
     Returns nothing/congratulates you if nothing's currently overdue.
-  - Before actually booking a `/task`/`/week` confirmation, re-check the
+  - ✅ Before actually booking a `/task`/`/week` confirmation, re-check the
     calendar one more time for a conflict that appeared between the proposal
-    and the click (small race-condition edge case, low priority for a
-    two-person household but cheap to add)
+    and the click — if something else got booked in that slot meanwhile,
+    nothing is added and you're asked to run the command again for a fresh
+    time, instead of silently double-booking.

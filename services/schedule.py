@@ -130,6 +130,13 @@ def _overlaps(a_start, a_end, b_start, b_end) -> bool:
     return a_start < b_end and b_start < a_end
 
 
+def has_conflict(events: list[dict], start: datetime, end: datetime, household_tz) -> bool:
+    """Whether a proposed (start, end) slot now overlaps a timed event -
+    used to re-check for a conflict that appeared on the calendar between
+    when a /task or /week slot was proposed and when it's actually booked."""
+    return any(_overlaps(start, end, b_start, b_end) for b_start, b_end in _busy_intervals(events, household_tz))
+
+
 def _round_up_to_granularity(moment: datetime, granularity_minutes: int) -> datetime:
     moment = moment.replace(second=0, microsecond=0)
     remainder = moment.minute % granularity_minutes

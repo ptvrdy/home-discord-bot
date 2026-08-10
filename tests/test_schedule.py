@@ -9,6 +9,7 @@ from services.schedule import (
     format_event_sources,
     format_time,
     get_week_start,
+    has_conflict,
     is_office_day,
     normalize_event,
     office_days_in_week,
@@ -559,6 +560,37 @@ class OfficeDayWindowNarrowingTests(unittest.TestCase):
         )
 
         self.assertGreaterEqual(slots[0][0].time(), time(17, 0))
+
+
+class HasConflictTests(unittest.TestCase):
+    def test_no_conflict_on_an_empty_calendar(self):
+        start = datetime(2026, 7, 20, 9, 0, tzinfo=HOUSEHOLD_TZ)
+        end = datetime(2026, 7, 20, 9, 30, tzinfo=HOUSEHOLD_TZ)
+
+        self.assertFalse(has_conflict([], start, end, HOUSEHOLD_TZ))
+
+    def test_detects_an_overlapping_event(self):
+        # Busy 9:00-10:00; proposed slot 9:15-9:45 overlaps.
+        busy = [_timed_event_for_slots(WEEK_START, 9, 0, 60)]
+        start = datetime(2026, 7, 20, 9, 15, tzinfo=HOUSEHOLD_TZ)
+        end = datetime(2026, 7, 20, 9, 45, tzinfo=HOUSEHOLD_TZ)
+
+        self.assertTrue(has_conflict(busy, start, end, HOUSEHOLD_TZ))
+
+    def test_no_conflict_for_a_non_overlapping_event(self):
+        # Busy 9:00-10:00; proposed slot 10:00-10:30 doesn't overlap (adjacent, not overlapping).
+        busy = [_timed_event_for_slots(WEEK_START, 9, 0, 60)]
+        start = datetime(2026, 7, 20, 10, 0, tzinfo=HOUSEHOLD_TZ)
+        end = datetime(2026, 7, 20, 10, 30, tzinfo=HOUSEHOLD_TZ)
+
+        self.assertFalse(has_conflict(busy, start, end, HOUSEHOLD_TZ))
+
+    def test_all_day_events_never_conflict(self):
+        busy = [_timed_event_for_slots(WEEK_START, 0, 0, 0, all_day=True)]
+        start = datetime(2026, 7, 20, 9, 0, tzinfo=HOUSEHOLD_TZ)
+        end = datetime(2026, 7, 20, 9, 30, tzinfo=HOUSEHOLD_TZ)
+
+        self.assertFalse(has_conflict(busy, start, end, HOUSEHOLD_TZ))
 
 
 if __name__ == "__main__":

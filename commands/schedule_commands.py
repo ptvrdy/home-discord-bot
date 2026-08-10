@@ -19,6 +19,7 @@ from services.schedule import (
     format_day_label,
     format_time,
     get_week_start,
+    has_conflict,
     office_days_in_week,
     parse_task_request,
     resolve_day,
@@ -136,38 +137,77 @@ class CancelButton(discord.ui.Button):
         )
 
 
+async def _confirm_and_book(
+    interaction: discord.Interaction,
+    task_name: str,
+    start: datetime,
+    end: datetime,
+    week_start,
+) -> None:
+    """Shared by TaskSlotView.confirm and TaskAlternativeButton: re-check the
+    calendar for a conflict that appeared since this slot was proposed
+    (someone could have booked something else in the meantime), then book it.
+    Assumes the caller already deferred the interaction."""
+    try:
+        events = get_week_events(week_start)
+    except Exception as error:
+        await interaction.edit_original_response(
+            content=f"❌ I couldn't check the calendar: {error}", view=None
+        )
+        return
+
+    if has_conflict(events, start, end, HOUSEHOLD_TZ):
+        await interaction.edit_original_response(
+            content=(
+                f"⚠️ Something else got booked in that slot for **{task_name}** since "
+                "this was proposed — nothing was added. Run the command again for a fresh time."
+            ),
+            view=None,
+        )
+        return
+
+    try:
+        create_event(task_name, start, end)
+    except Exception as error:
+        await interaction.edit_original_response(
+            content=f"❌ I couldn't add that to the calendar: {error}", view=None
+        )
+        return
+
+    await refresh_this_week(interaction.client)
+    await interaction.edit_original_response(
+        content=(
+            f"✅ Added **{task_name}** to the calendar — "
+            f"{format_day_label(start.date())} at {format_time(start)}."
+        ),
+        view=None,
+    )
+
+
 class TaskAlternativeButton(discord.ui.Button):
-    def __init__(self, task_name: str, start: datetime, end: datetime):
+    def __init__(self, task_name: str, start: datetime, end: datetime, week_start):
         super().__init__(label=f"{start.strftime('%a')} {format_time(start)}", style=discord.ButtonStyle.primary)
         self.task_name = task_name
         self.start = start
         self.end = end
+        self.week_start = week_start
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer()
-        try:
-            create_event(self.task_name, self.start, self.end)
-        except Exception as error:
-            await interaction.edit_original_response(
-                content=f"❌ I couldn't add that to the calendar: {error}", view=None
-            )
-            return
-
-        await refresh_this_week(interaction.client)
-        await interaction.edit_original_response(
-            content=(
-                f"✅ Added **{self.task_name}** to the calendar — "
-                f"{format_day_label(self.start.date())} at {format_time(self.start)}."
-            ),
-            view=None,
-        )
+        await _confirm_and_book(interaction, self.task_name, self.start, self.end, self.week_start)
 
 
 class TaskAlternativesView(RequesterOnlyView):
-    def __init__(self, task_name: str, alternatives: list[tuple[datetime, datetime]], requester_id: int):
+    def __init__(
+        self,
+        task_name: str,
+        alternatives: list[tuple[datetime, datetime]],
+        requester_id: int,
+        week_start,
+    ):
         super().__init__(requester_id)
         for start, end in alternatives:
-            self.add_item(TaskAlternativeButton(task_name, start, end))
+            self.add_item(TaskAlternativeButton(task_name, start, end, week_start))
         self.add_item(CancelButton(task_name))
 
 
@@ -192,22 +232,7 @@ class TaskSlotView(RequesterOnlyView):
     @discord.ui.button(label="Confirm", style=discord.ButtonStyle.success)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
-        try:
-            create_event(self.task_name, self.start, self.end)
-        except Exception as error:
-            await interaction.edit_original_response(
-                content=f"❌ I couldn't add that to the calendar: {error}", view=None
-            )
-            return
-
-        await refresh_this_week(interaction.client)
-        await interaction.edit_original_response(
-            content=(
-                f"✅ Added **{self.task_name}** to the calendar — "
-                f"{format_day_label(self.start.date())} at {format_time(self.start)}."
-            ),
-            view=None,
-        )
+        await _confirm_and_book(interaction, self.task_name, self.start, self.end, self.week_start)
 
     @discord.ui.button(label="Pick Different Time", style=discord.ButtonStyle.secondary)
     async def pick_different(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -239,7 +264,7 @@ class TaskSlotView(RequesterOnlyView):
             )
             return
 
-        view = TaskAlternativesView(self.task_name, alternatives, self.requester_id)
+        view = TaskAlternativesView(self.task_name, alternatives, self.requester_id, self.week_start)
         await interaction.edit_original_response(
             content=f"Pick a different time for **{self.task_name}**:", view=view
         )
