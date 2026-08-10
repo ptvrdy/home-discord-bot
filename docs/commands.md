@@ -92,6 +92,7 @@ real @-mention that pings them; otherwise it just prints their name.
 |---|---|
 | `/check_setup` | Compares every configured tag against what's actually on the recipe forum channel and reports mismatches or missing tags. |
 | `/check_calendar_setup` | Verifies the Google service account can reach each configured calendar (i.e. it's actually been shared), and reports the calendar name or the error for each. |
+| `/backup_now` | Manually back up the database right now instead of waiting for the automatic daily 3am backup. Keeps the most recent 14 backups in `data/backups/`, pruning older ones. |
 
 ---
 

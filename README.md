@@ -410,6 +410,21 @@ slash commands globally (global command updates can take up to an hour to appear
 on all clients — if a command doesn't show up right away, try fully restarting
 your Discord client before assuming something's broken).
 
+## Backups
+
+Every piece of the bot's state — recipes, chore history, wishlist, meal plan,
+scheduled tasks — lives in the single `data/rosies_recipe_box.db` file. A background
+task copies it into `data/backups/` at 3am daily (timestamped, e.g.
+`rosies_recipe_box_20260810_030000.db`), keeping the most recent 14 and pruning
+older ones automatically. Run **`/backup_now`** any time for an on-demand backup
+instead of waiting for the next 3am run.
+
+This protects against DB corruption or an accidental delete, but the backups still
+live on the same disk as the live database — it won't help if that whole machine or
+drive is lost. Periodically copying `data/backups/` somewhere else (a second
+computer, external drive, cloud storage) closes that gap; `data/backups/` is
+git-ignored, so it's never at risk of being swept up in a commit.
+
 ## Testing
 
 ```
