@@ -8,6 +8,9 @@ from models.recipe_card import Recipe
 from services.database import (
     add_cooking_log,
     get_all_chores,
+    get_chore_completions_between,
+    get_chore_completions_by_person,
+    get_chore_log_entries,
     get_chore_names,
     get_cooking_log_entries,
     get_cooking_stats,
@@ -28,6 +31,7 @@ from services.database import (
     search_recipe_titles,
     search_recipes,
     set_journal_message_id,
+    undo_last_done,
     set_recipe_tags,
     update_recipe_status,
 )
@@ -640,6 +644,177 @@ class ChoreDatabaseTests(unittest.TestCase):
 
             chores = {c["name"]: c for c in get_all_chores(database_path)}
             self.assertEqual(chores["Mop"]["nudge_sent_at"], sent_at.isoformat())
+
+
+class ChoreLogTests(unittest.TestCase):
+    def test_mark_chore_done_logs_an_entry(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            done_at = datetime(2026, 1, 15, tzinfo=timezone.utc)
+
+            mark_chore_done("Mop", "Peyton", done_at, database_path)
+
+            entries = get_chore_log_entries("Mop", database_path)
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0]["done_at"], done_at.isoformat())
+            self.assertEqual(entries[0]["done_by"], "Peyton")
+
+    def test_multiple_completions_all_logged_oldest_first(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            mark_chore_done("Mop", "Peyton", datetime(2026, 1, 1, tzinfo=timezone.utc), database_path)
+            mark_chore_done("Mop", "Husband", datetime(2026, 1, 15, tzinfo=timezone.utc), database_path)
+
+            entries = get_chore_log_entries("Mop", database_path)
+
+            self.assertEqual([e["done_by"] for e in entries], ["Peyton", "Husband"])
+
+    def test_backdated_entry_out_of_order_still_resolves_current_state_correctly(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            # Log the more recent completion first, then backfill an older one.
+            mark_chore_done("Mop", "Peyton", datetime(2026, 1, 15, tzinfo=timezone.utc), database_path)
+            mark_chore_done("Mop", "Husband", datetime(2026, 1, 1, tzinfo=timezone.utc), database_path)
+
+            chores = {c["name"]: c for c in get_all_chores(database_path)}
+            # Current state should reflect the chronologically latest
+            # completion (Jan 15, Peyton), not whichever was logged last.
+            self.assertEqual(chores["Mop"]["last_done_by"], "Peyton")
+            self.assertEqual(chores["Mop"]["last_done_at"], datetime(2026, 1, 15, tzinfo=timezone.utc).isoformat())
+
+    def test_get_chore_log_entries_empty_for_unknown_chore(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+
+            self.assertEqual(get_chore_log_entries("Not A Chore", database_path), [])
+
+    def test_get_chore_completions_by_person_aggregates_across_all_chores(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            mark_chore_done("Mop", "Peyton", datetime(2026, 1, 1, tzinfo=timezone.utc), database_path)
+            mark_chore_done("Vacuum couch", "Peyton", datetime(2026, 1, 2, tzinfo=timezone.utc), database_path)
+            mark_chore_done("Wash bed sheets", "Husband", datetime(2026, 1, 3, tzinfo=timezone.utc), database_path)
+
+            counts = {row["done_by"]: row["entry_count"] for row in get_chore_completions_by_person(database_path)}
+
+            self.assertEqual(counts, {"Peyton": 2, "Husband": 1})
+
+
+class GetChoreCompletionsBetweenTests(unittest.TestCase):
+    def test_returns_completions_within_range_across_chores(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            mark_chore_done("Mop", "Peyton", datetime(2026, 1, 10, tzinfo=timezone.utc), database_path)
+            mark_chore_done("Vacuum couch", "Husband", datetime(2026, 1, 12, tzinfo=timezone.utc), database_path)
+
+            entries = get_chore_completions_between(
+                datetime(2026, 1, 1, tzinfo=timezone.utc),
+                datetime(2026, 1, 20, tzinfo=timezone.utc),
+                database_path,
+            )
+
+            self.assertEqual(len(entries), 2)
+            self.assertEqual([e["chore_name"] for e in entries], ["Mop", "Vacuum couch"])
+            self.assertEqual(entries[0]["done_by"], "Peyton")
+
+    def test_excludes_completions_outside_range(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            mark_chore_done("Mop", "Peyton", datetime(2025, 12, 1, tzinfo=timezone.utc), database_path)
+
+            entries = get_chore_completions_between(
+                datetime(2026, 1, 1, tzinfo=timezone.utc),
+                datetime(2026, 1, 20, tzinfo=timezone.utc),
+                database_path,
+            )
+
+            self.assertEqual(entries, [])
+
+    def test_end_is_exclusive(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            boundary = datetime(2026, 1, 20, tzinfo=timezone.utc)
+            mark_chore_done("Mop", "Peyton", boundary, database_path)
+
+            entries = get_chore_completions_between(
+                datetime(2026, 1, 1, tzinfo=timezone.utc), boundary, database_path
+            )
+
+            self.assertEqual(entries, [])
+
+    def test_empty_when_nothing_logged(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+
+            entries = get_chore_completions_between(
+                datetime(2026, 1, 1, tzinfo=timezone.utc),
+                datetime(2026, 1, 20, tzinfo=timezone.utc),
+                database_path,
+            )
+
+            self.assertEqual(entries, [])
+
+
+class UndoLastDoneTests(unittest.TestCase):
+    def test_removes_the_most_recently_logged_entry(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            mark_chore_done("Mop", "Peyton", datetime(2026, 1, 1, tzinfo=timezone.utc), database_path)
+            mark_chore_done("Mop", "Husband", datetime(2026, 1, 15, tzinfo=timezone.utc), database_path)
+
+            result = undo_last_done("Mop", database_path)
+
+            self.assertEqual(result["removed"]["done_by"], "Husband")
+            entries = get_chore_log_entries("Mop", database_path)
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0]["done_by"], "Peyton")
+
+    def test_reverts_current_state_to_the_remaining_entry(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            mark_chore_done("Mop", "Peyton", datetime(2026, 1, 1, tzinfo=timezone.utc), database_path)
+            mark_chore_done("Mop", "Husband", datetime(2026, 1, 15, tzinfo=timezone.utc), database_path)
+
+            result = undo_last_done("Mop", database_path)
+
+            self.assertEqual(result["chore"]["last_done_by"], "Peyton")
+            self.assertEqual(result["chore"]["last_done_at"], datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat())
+
+    def test_undoing_the_only_entry_clears_current_state(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            mark_chore_done("Mop", "Peyton", datetime(2026, 1, 1, tzinfo=timezone.utc), database_path)
+
+            result = undo_last_done("Mop", database_path)
+
+            self.assertIsNone(result["chore"]["last_done_at"])
+            self.assertIsNone(result["chore"]["last_done_by"])
+
+    def test_returns_none_when_chore_has_no_history(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+
+            self.assertIsNone(undo_last_done("Mop", database_path))
+
+    def test_returns_none_for_unknown_chore(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+
+            self.assertIsNone(undo_last_done("Not A Chore", database_path))
 
 
 class BotStateTests(unittest.TestCase):

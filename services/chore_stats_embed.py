@@ -45,7 +45,7 @@ def build_chore_stats_embed(stats: dict) -> discord.Embed:
             f"{name}: {count}"
             for name, count in sorted(stats["by_person"].items(), key=lambda pair: -pair[1])
         ]
-        embed.add_field(name="Most Recently Responsible For", value="\n".join(lines), inline=True)
+        embed.add_field(name="🏆 Chores Completed", value="\n".join(lines), inline=True)
 
     embed.set_footer(text="🏠 Household Hub")
     return embed

@@ -95,6 +95,14 @@ def initialize_database(database_path: Path = DATABASE_PATH) -> None:
                 nudge_sent_at TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS chore_log (
+                id INTEGER PRIMARY KEY,
+                chore_id INTEGER NOT NULL REFERENCES chores(id) ON DELETE CASCADE,
+                done_at TEXT NOT NULL,
+                done_by TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS bot_state (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -631,33 +639,159 @@ def get_chore_names(database_path: Path = DATABASE_PATH) -> list[str]:
         return [row[0] for row in rows]
 
 
+def _recompute_chore_state(connection: sqlite3.Connection, chore_id: int) -> None:
+    """Set a chore's last_done_at/last_done_by from its most recent chore_log
+    entry (ranked by completion time, not insertion order - so a backdated
+    entry logged out of order still resolves to the true most-recent
+    completion), or clear both if no history remains. Always clears any
+    pending nudge, since whatever it was warning about is being reassessed."""
+    row = connection.execute(
+        "SELECT done_at, done_by FROM chore_log WHERE chore_id = ? ORDER BY done_at DESC LIMIT 1",
+        (chore_id,),
+    ).fetchone()
+    if row:
+        connection.execute(
+            "UPDATE chores SET last_done_at = ?, last_done_by = ?, nudge_sent_at = NULL WHERE id = ?",
+            (row[0], row[1], chore_id),
+        )
+    else:
+        connection.execute(
+            "UPDATE chores SET last_done_at = NULL, last_done_by = NULL, nudge_sent_at = NULL WHERE id = ?",
+            (chore_id,),
+        )
+
+
 def mark_chore_done(
     name: str,
     completed_by: str,
     done_at: datetime,
     database_path: Path = DATABASE_PATH,
 ) -> dict | None:
-    """Record a chore as done and clear any pending nudge for it, since the
-    thing the nudge was warning about no longer applies. Matches the chore
-    name case-insensitively. Returns the updated chore, or None if no chore
-    has that name."""
+    """Log a chore completion (chore_log) and refresh the chore's
+    current-state snapshot from its fullest history, not just this one entry
+    - so backdating out of chronological order still resolves to the true
+    most-recent completion. Matches the chore name case-insensitively.
+    Returns the updated chore, or None if no chore has that name."""
     initialize_database(database_path)
     with _database_connection(database_path) as connection:
         connection.row_factory = sqlite3.Row
-        cursor = connection.execute(
-            """
-            UPDATE chores
-            SET last_done_at = ?, last_done_by = ?, nudge_sent_at = NULL
-            WHERE name = ? COLLATE NOCASE
-            """,
-            (done_at.isoformat(), completed_by, name),
-        )
-        if cursor.rowcount == 0:
-            return None
-        row = connection.execute(
-            "SELECT * FROM chores WHERE name = ? COLLATE NOCASE", (name,)
+        chore_row = connection.execute(
+            "SELECT id FROM chores WHERE name = ? COLLATE NOCASE", (name,)
         ).fetchone()
+        if chore_row is None:
+            return None
+
+        chore_id = chore_row["id"]
+        connection.execute(
+            "INSERT INTO chore_log (chore_id, done_at, done_by) VALUES (?, ?, ?)",
+            (chore_id, done_at.isoformat(), completed_by),
+        )
+        _recompute_chore_state(connection, chore_id)
+
+        row = connection.execute("SELECT * FROM chores WHERE id = ?", (chore_id,)).fetchone()
         return dict(row)
+
+
+def get_chore_log_entries(
+    name: str,
+    database_path: Path = DATABASE_PATH,
+) -> list[dict]:
+    """Return every logged completion for a chore, oldest first."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        chore_row = connection.execute(
+            "SELECT id FROM chores WHERE name = ? COLLATE NOCASE", (name,)
+        ).fetchone()
+        if chore_row is None:
+            return []
+
+        rows = connection.execute(
+            "SELECT done_at, done_by FROM chore_log WHERE chore_id = ? ORDER BY done_at ASC",
+            (chore_row["id"],),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_chore_completions_by_person(database_path: Path = DATABASE_PATH) -> list[dict]:
+    """Return [{"done_by": ..., "entry_count": ...}, ...] across every
+    logged chore completion ever recorded, most active first."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT done_by, COUNT(*) AS entry_count
+            FROM chore_log
+            GROUP BY done_by
+            ORDER BY entry_count DESC
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_chore_completions_between(
+    start: datetime,
+    end: datetime,
+    database_path: Path = DATABASE_PATH,
+) -> list[dict]:
+    """Return every logged chore completion in [start, end), across every
+    chore, joined with the chore's name and ordered chronologically - used
+    for the weekly digest's "what got done last week" recap."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT chores.name AS chore_name, chore_log.done_at, chore_log.done_by
+            FROM chore_log
+            JOIN chores ON chores.id = chore_log.chore_id
+            WHERE chore_log.done_at >= ? AND chore_log.done_at < ?
+            ORDER BY chore_log.done_at ASC
+            """,
+            (start.isoformat(), end.isoformat()),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def undo_last_done(
+    name: str,
+    database_path: Path = DATABASE_PATH,
+) -> dict | None:
+    """Remove the most recently *logged* completion for a chore (the last
+    /done run against it, ranked by insertion order rather than done_at, so
+    undo always reverts your last action even if it was itself a backdated
+    entry) and recompute the chore's current state from whatever history
+    remains. Returns {"chore": <updated chore row>, "removed": {"done_at":
+    ..., "done_by": ...}}, or None if the chore doesn't exist or has no
+    logged history to undo."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        chore_row = connection.execute(
+            "SELECT id FROM chores WHERE name = ? COLLATE NOCASE", (name,)
+        ).fetchone()
+        if chore_row is None:
+            return None
+
+        chore_id = chore_row["id"]
+        last_entry = connection.execute(
+            "SELECT id, done_at, done_by FROM chore_log WHERE chore_id = ? ORDER BY id DESC LIMIT 1",
+            (chore_id,),
+        ).fetchone()
+        if last_entry is None:
+            return None
+
+        connection.execute("DELETE FROM chore_log WHERE id = ?", (last_entry["id"],))
+        _recompute_chore_state(connection, chore_id)
+
+        updated_chore = connection.execute(
+            "SELECT * FROM chores WHERE id = ?", (chore_id,)
+        ).fetchone()
+        return {
+            "chore": dict(updated_chore),
+            "removed": {"done_at": last_entry["done_at"], "done_by": last_entry["done_by"]},
+        }
 
 
 def mark_nudge_sent(

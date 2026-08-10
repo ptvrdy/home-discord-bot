@@ -192,8 +192,11 @@ HELP_SECTIONS = [
     (
         "🧹 Household Chores",
         [
-            ("/done <chore>", "Mark a chore as completed. Add someone to attribute it to them, or a days_ago to backdate it."),
-            ("/chore_stats", "Chore board size, overdue/coming-up counts, the most overdue chore, and who's last done what."),
+            ("/done <chore>", "Log a chore as completed. Add someone to attribute it to them, or a days_ago to backdate it."),
+            ("/undo_done <chore>", "Remove the most recent /done you logged for a chore."),
+            ("/chore_stats", "Chore board size, overdue/coming-up counts, the most overdue chore, and cumulative completions per person."),
+            ("/weekly_digest", "Manually post the weekly recap instead of waiting for the automatic Sunday 8pm post."),
+            ("/random_chore", "Suggest what to do today, weighted toward whatever's most overdue."),
         ],
     ),
     (

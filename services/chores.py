@@ -1,6 +1,7 @@
 """Pure chore-overdue logic. No Discord, no SQLite - just dicts in, dicts/
 strings out, so it's easy to unit test without a database or a bot."""
 
+import random
 from datetime import datetime
 
 
@@ -86,6 +87,33 @@ def chore_stats(chores: list[dict], now: datetime) -> dict:
         "worst_offender_days_late": worst_offender_days_late,
         "by_person": by_person,
     }
+
+
+def _overdue_weight(chore: dict, now: datetime) -> int:
+    """Higher weight = more overdue = more likely to be picked by
+    random_overdue_chore. Never-done chores use their own threshold as a
+    reasonable baseline weight, since there's no way to know how overdue
+    they truly are."""
+    days = days_since(chore["last_done_at"], now)
+    if days is None:
+        return 1 + chore["threshold_days"]
+    return 1 + max(0, days - chore["threshold_days"])
+
+
+def random_overdue_chore(
+    chores: list[dict],
+    now: datetime,
+    rng: random.Random | None = None,
+) -> dict | None:
+    """Pick a random overdue chore, weighted toward whichever is most
+    overdue. Returns None if nothing is currently overdue."""
+    overdue = [chore for chore in chores if is_overdue(chore, now)]
+    if not overdue:
+        return None
+
+    rng = rng or random
+    weights = [_overdue_weight(chore, now) for chore in overdue]
+    return rng.choices(overdue, weights=weights, k=1)[0]
 
 
 def format_nudge_message(chore: dict, now: datetime) -> str:

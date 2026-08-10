@@ -97,19 +97,32 @@ Run `/help` in Discord any time for a categorized list of every command, or see
 ## Household chores
 
 The bot also tracks recurring household chores (SQLite, same database as everything
-else). Each chore has a nudge threshold in days and remembers who last did it and when.
+else). Each chore has a nudge threshold in days; every completion is logged to a
+full history table (`chore_log`), and the chore's own "last done" snapshot is
+always recomputed from that history's true most-recent entry — so logging things
+out of order (e.g. backdating an older completion after a more recent one) never
+corrupts the current state.
 
-- **`/done <chore>`** — marks a chore completed under whichever Discord user ran
+- **`/done <chore>`** — logs a completion under whichever Discord user ran
   the command, or under someone else if you pass `completed_by`. Autocomplete
   helps you pick the exact chore name. Doing a chore also clears any pending
   overdue reminder for it. Pass `days_ago` to backdate it (e.g. `days_ago: 3`
   for "3 days ago") instead of logging it as just now — handy for entering
   chore history after setting up a new install.
+- **`/undo_done <chore>`** — removes the most recent `/done` you logged for a
+  chore and recomputes its current state from whatever history remains (or
+  clears it entirely if that was the only logged completion).
 - **`/chore_stats`** — chore board size, overdue/coming-up counts, the single
-  most overdue chore, and a snapshot of who most recently completed each chore.
-  This reflects current state only, not lifetime totals — the chores table
-  tracks each chore's last completion, not a full history of every time it's
-  been done.
+  most overdue chore, and a **cumulative** completions-per-person breakdown
+  pulled from the full chore history, not just a last-completer snapshot.
+- **Weekly digest** — posted automatically every Sunday at 8pm household time
+  to the `#this-week` channel (same one set via `THIS_WEEK_CHANNEL_ID`),
+  recapping the week that just ended: chores completed and by whom, a
+  per-person leaderboard, and what's still overdue. Run **`/weekly_digest`**
+  any time to post it on demand instead of waiting for Sunday.
+- **`/random_chore`** — suggests what to do today, picked randomly but
+  weighted toward whatever's most overdue. Congratulates you instead if
+  nothing's currently overdue.
 - **Automatic nudges** — a background task checks every chore at 9am and 5pm
   (household timezone) and posts to `#nudges` (set via `NUDGES_CHANNEL_ID`) the
   first time a chore crosses its threshold, mentioning who last did it and how
@@ -305,6 +318,7 @@ services/
     grocery_list.py          OurGroceries integration
     chores.py                Pure chore-overdue logic (no Discord, no SQLite)
     chore_stats_embed.py     Builds the /chore_stats embed
+    weekly_digest_embed.py  Builds the weekly digest embed
     google_calendar.py       Google Calendar service-account integration
     schedule.py               Pure event date-math/dedup/free-slot-finding/formatting logic
     this_week_embed.py        Builds the #this-week embed layout
@@ -390,25 +404,30 @@ second.
   office-day-aware scheduling (5pm-only proposals on a day either person is
   marked in-office, plus an office/home status line on `#this-week`), ✅
   `/chore_stats`, ✅ a trash/recycling/compost line on `#this-week` driven by
-  `config/waste_schedule.py`. All originally-scoped pieces are built; possible
-  next steps if useful later:
+  `config/waste_schedule.py`, ✅ a chore history table + `/undo_done`, ✅ a
+  weekly digest. All originally-scoped pieces are built; possible next steps
+  if useful later:
   - Per-task duration instead of a fixed 30 minutes; editing or cancelling an
     already-confirmed task/event from Discord (not just an unconfirmed proposal)
   - Mark a one-off `/task`/`/week` item as actually completed via a ✅ reaction on
     its confirmation message, separate from the recurring-chore `/done` system
-  - A proper chore history table (parallel to `cooking_log`) logging every
-    `/done` as its own row instead of overwriting one "last done" field per
-    chore — unlocks real cumulative stats (totals over time, streaks,
-    "who's done more this month") instead of `/chore_stats`' current
-    snapshot-only view
-  - `/undo_done` to walk back a mistaken `/done` — depends on the chore
-    history table above to know what the previous state actually was
-  - A weekly digest post (Sunday night or Monday morning) summarizing the
-    *previous* week — chores done and by whom, tasks completed, what's still
-    overdue — as the backward-looking counterpart to `#this-week`'s
-    forward-looking view. More useful once the chore history table exists.
-  - `/random` for chores — suggest what to do today, weighted toward
-    whatever's most overdue, mirroring `/random`'s recipe-suggestion behavior
+  - ✅ A proper chore history table (`chore_log`, parallel to `cooking_log`)
+    logging every `/done` as its own row instead of overwriting one "last
+    done" field per chore — `/chore_stats`' per-person breakdown is now a
+    real cumulative total, not a last-completer snapshot. Still open: totals
+    over a specific time window (e.g. "this month") rather than all-time.
+  - ✅ `/undo_done` to walk back a mistaken `/done`
+  - ✅ A weekly digest (Sunday 8pm, or `/weekly_digest` on demand) recapping
+    the *previous* week — chores completed and by whom, a per-person
+    leaderboard, and what's still overdue — as the backward-looking
+    counterpart to `#this-week`'s forward-looking view. Scope note: this only
+    covers recurring chores, not one-off `/task`/`/week` items, since there's
+    currently no way to tell a bot-booked calendar event apart from any other
+    event on the calendar.
+  - ✅ `/random_chore` — suggest what to do today, weighted toward whatever's
+    most overdue (never-done chores use their own threshold as a baseline
+    weight, since there's no way to know how overdue they truly are).
+    Returns nothing/congratulates you if nothing's currently overdue.
   - Before actually booking a `/task`/`/week` confirmation, re-check the
     calendar one more time for a conflict that appeared between the proposal
     and the click (small race-condition edge case, low priority for a

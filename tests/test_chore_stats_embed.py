@@ -58,12 +58,12 @@ class BuildChoreStatsEmbedTests(unittest.TestCase):
         stats = _stats(by_person={"Sam": 1, "Alex": 3})
         embed = build_chore_stats_embed(stats)
         fields = {field.name: field.value for field in embed.fields}
-        value = fields["Most Recently Responsible For"]
+        value = fields["🏆 Chores Completed"]
         self.assertLess(value.index("Alex"), value.index("Sam"))
 
     def test_no_by_person_field_when_empty(self):
         embed = build_chore_stats_embed(_stats(by_person={}))
-        self.assertNotIn("Most Recently Responsible For", {f.name for f in embed.fields})
+        self.assertNotIn("🏆 Chores Completed", {f.name for f in embed.fields})
 
 
 if __name__ == "__main__":

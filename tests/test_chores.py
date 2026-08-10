@@ -1,3 +1,4 @@
+import random
 import unittest
 from datetime import datetime, timedelta, timezone
 
@@ -8,6 +9,7 @@ from services.chores import (
     days_since,
     format_nudge_message,
     is_overdue,
+    random_overdue_chore,
 )
 
 
@@ -205,6 +207,53 @@ class ChoreStatsTests(unittest.TestCase):
         self.assertEqual(stats["overdue_count"], 0)
         self.assertEqual(stats["by_person"], {})
         self.assertIsNone(stats["worst_offender"])
+
+
+class RandomOverdueChoreTests(unittest.TestCase):
+    def test_returns_none_when_nothing_is_overdue(self):
+        last_done = (NOW - timedelta(days=1)).isoformat()
+        chores = [_chore(name="Mop", threshold_days=14, last_done_at=last_done)]
+
+        self.assertIsNone(random_overdue_chore(chores, NOW))
+
+    def test_only_picks_from_overdue_chores(self):
+        chores = [
+            _chore(name="Mop", threshold_days=14, last_done_at=(NOW - timedelta(days=1)).isoformat()),
+            _chore(name="Clean oven", last_done_at=None),
+        ]
+
+        picked = random_overdue_chore(chores, NOW, rng=random.Random(0))
+
+        self.assertEqual(picked["name"], "Clean oven")
+
+    def test_is_deterministic_with_a_seeded_rng(self):
+        chores = [
+            _chore(name="Mop", last_done_at=None),
+            _chore(name="Clean oven", last_done_at=None),
+            _chore(name="Vacuum couch", last_done_at=None),
+        ]
+
+        first = random_overdue_chore(chores, NOW, rng=random.Random(42))
+        second = random_overdue_chore(chores, NOW, rng=random.Random(42))
+
+        self.assertEqual(first["name"], second["name"])
+
+    def test_more_overdue_chores_are_weighted_higher(self):
+        chores = [
+            _chore(name="Barely overdue", threshold_days=14, last_done_at=(NOW - timedelta(days=14)).isoformat()),
+            _chore(name="Very overdue", threshold_days=14, last_done_at=(NOW - timedelta(days=100)).isoformat()),
+        ]
+
+        counts = {"Barely overdue": 0, "Very overdue": 0}
+        rng = random.Random(1)
+        for _ in range(500):
+            picked = random_overdue_chore(chores, NOW, rng=rng)
+            counts[picked["name"]] += 1
+
+        self.assertGreater(counts["Very overdue"], counts["Barely overdue"])
+
+    def test_empty_chore_list_returns_none(self):
+        self.assertIsNone(random_overdue_chore([], NOW))
 
 
 if __name__ == "__main__":

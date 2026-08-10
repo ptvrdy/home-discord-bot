@@ -7,13 +7,24 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from services.chore_stats_embed import build_chore_stats_embed
-from services.chores import chore_stats, chores_needing_nudge, format_nudge_message
+from services.chores import (
+    chore_stats,
+    chores_needing_nudge,
+    days_since,
+    format_nudge_message,
+    random_overdue_chore,
+)
 from services.database import (
     get_all_chores,
+    get_chore_completions_between,
+    get_chore_completions_by_person,
     get_chore_names,
     mark_chore_done,
     mark_nudge_sent,
+    undo_last_done,
 )
+from services.schedule import get_week_start
+from services.weekly_digest_embed import build_weekly_digest_embed
 
 
 def _household_timezone():
@@ -28,6 +39,8 @@ def _household_timezone():
 
 HOUSEHOLD_TZ = _household_timezone()
 NUDGE_TIMES = [time(9, 0, tzinfo=HOUSEHOLD_TZ), time(17, 0, tzinfo=HOUSEHOLD_TZ)]
+WEEKLY_DIGEST_TIME = time(20, 0, tzinfo=HOUSEHOLD_TZ)  # checked daily, only posts on Sunday
+WEEKLY_DIGEST_WEEKDAY = 6  # Sunday, per date.weekday() (Monday=0 ... Sunday=6)
 
 
 async def chore_name_autocomplete(
@@ -38,15 +51,53 @@ async def chore_name_autocomplete(
     return [app_commands.Choice(name=name, value=name) for name in matches[:25]]
 
 
+async def post_weekly_digest(bot: commands.Bot) -> None:
+    """Post a recap of the week that just ended (chores completed and by
+    whom, plus what's still overdue) to the same channel #this-week lives
+    in. Shared by the scheduled Sunday-night post and the manual
+    /weekly_digest command."""
+    channel_id = os.getenv("THIS_WEEK_CHANNEL_ID")
+    if not channel_id:
+        return
+
+    channel = bot.get_channel(int(channel_id))
+    if not isinstance(channel, discord.abc.Messageable):
+        return
+
+    now = datetime.now(HOUSEHOLD_TZ)
+    this_week_start = get_week_start(now.date())
+    last_week_start = this_week_start - timedelta(days=7)
+
+    range_start = datetime.combine(last_week_start, datetime.min.time(), tzinfo=HOUSEHOLD_TZ)
+    range_end = datetime.combine(this_week_start, datetime.min.time(), tzinfo=HOUSEHOLD_TZ)
+
+    completions = get_chore_completions_between(range_start, range_end)
+    chores = get_all_chores()
+    embed = build_weekly_digest_embed(last_week_start, completions, chores, now)
+    await channel.send(embed=embed)
+
+
 class Chores(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         nudges_channel_id = os.getenv("NUDGES_CHANNEL_ID")
         self.nudges_channel_id = int(nudges_channel_id) if nudges_channel_id else None
         self.nudge_check.start()
+        self.weekly_digest_task.start()
 
     def cog_unload(self):
         self.nudge_check.cancel()
+        self.weekly_digest_task.cancel()
+
+    @tasks.loop(time=WEEKLY_DIGEST_TIME)
+    async def weekly_digest_task(self):
+        if datetime.now(HOUSEHOLD_TZ).weekday() != WEEKLY_DIGEST_WEEKDAY:
+            return
+        await post_weekly_digest(self.bot)
+
+    @weekly_digest_task.before_loop
+    async def before_weekly_digest(self):
+        await self.bot.wait_until_ready()
 
     @tasks.loop(time=NUDGE_TIMES)
     async def nudge_check(self):
@@ -108,7 +159,79 @@ class Chores(commands.Cog):
     async def chore_stats_command(self, interaction: discord.Interaction):
         now = datetime.now(HOUSEHOLD_TZ)
         stats = chore_stats(get_all_chores(), now)
+        stats["by_person"] = {
+            row["done_by"]: row["entry_count"] for row in get_chore_completions_by_person()
+        }
         await interaction.response.send_message(embed=build_chore_stats_embed(stats))
+
+    @app_commands.command(
+        name="undo_done",
+        description="Undo the most recent /done you logged for a chore",
+    )
+    @app_commands.describe(chore="Which chore to undo the last completion for")
+    @app_commands.autocomplete(chore=chore_name_autocomplete)
+    async def undo_done(self, interaction: discord.Interaction, chore: str):
+        result = undo_last_done(chore)
+
+        if result is None:
+            await interaction.response.send_message(
+                f'❌ No logged completion to undo for "{chore}" — either the '
+                "chore name doesn't match exactly, or it has no history yet.",
+                ephemeral=True,
+            )
+            return
+
+        updated_chore = result["chore"]
+        removed = result["removed"]
+        if updated_chore["last_done_at"]:
+            new_state = f"now last logged as done by {updated_chore['last_done_by']}"
+        else:
+            new_state = "now has no logged history at all"
+
+        await interaction.response.send_message(
+            f"↩️ Undid **{updated_chore['name']}**'s completion by {removed['done_by']} — {new_state}."
+        )
+
+    @app_commands.command(
+        name="weekly_digest",
+        description="Manually post the weekly recap instead of waiting for Sunday night",
+    )
+    async def weekly_digest_command(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        if not os.getenv("THIS_WEEK_CHANNEL_ID"):
+            await interaction.followup.send(
+                "❌ THIS_WEEK_CHANNEL_ID isn't set in .env.", ephemeral=True
+            )
+            return
+
+        await post_weekly_digest(self.bot)
+        await interaction.followup.send("✅ Weekly digest posted.", ephemeral=True)
+
+    @app_commands.command(
+        name="random_chore",
+        description="Suggest what to do today, weighted toward whatever's most overdue",
+    )
+    async def random_chore(self, interaction: discord.Interaction):
+        now = datetime.now(HOUSEHOLD_TZ)
+        chore = random_overdue_chore(get_all_chores(), now)
+
+        if chore is None:
+            await interaction.response.send_message(
+                "✅ Nothing's overdue right now — you're all caught up!"
+            )
+            return
+
+        days = days_since(chore["last_done_at"], now)
+        if days is None:
+            history = "never been logged as done"
+        else:
+            day_word = "day" if days == 1 else "days"
+            history = f"last done {days} {day_word} ago"
+
+        await interaction.response.send_message(
+            f"🎲 How about **{chore['name']}**? ({history})"
+        )
 
 
 async def setup(bot):
