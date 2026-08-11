@@ -19,10 +19,12 @@ Run `/help` in Discord any time for a categorized list of every command, or see
     most sites. NYT Cooking gets a fallback scraper
     ([`services/nyt_fallback.py`](services/nyt_fallback.py)) that reads the page
     directly, since `recipe_scrapers` currently misses NYT's `legacyTime` field.
-  - If the URL is a TikTok link (or scraping otherwise isn't possible), opens a
-    two-step modal instead — name/ingredients/instructions/image/video URL, then
-    prep/cook/total time and servings — producing the exact same `Recipe` object,
-    fields, tags, and card layout as a scraped recipe.
+  - If the URL is a TikTok link, opens a two-step hand-entry modal directly —
+    name/ingredients/instructions/image/source URL, then prep/cook/total time and
+    servings — producing the exact same `Recipe` object, fields, tags, and card
+    layout as a scraped recipe. For any other site, it attempts the scrape first;
+    if that fails (site blocks automated imports, unsupported layout, etc.), a
+    followup message offers an **Add Manually** button that opens the same modal.
   - Checks for an existing import by URL first and links you to the existing
     thread instead of creating a duplicate.
   - Posts a numbered-step instructions embed as a separate follow-up message

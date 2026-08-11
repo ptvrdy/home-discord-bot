@@ -302,8 +302,8 @@ class ManualRecipeModal(discord.ui.Modal, title="Add a Recipe · Details"):
         max_length=300,
     )
     video_url = discord.ui.TextInput(
-        label="Video URL",
-        placeholder="https://www.tiktok.com/...",
+        label="Source URL",
+        placeholder="https://... (the recipe page or video)",
         max_length=300,
     )
 
@@ -317,7 +317,7 @@ class ManualRecipeModal(discord.ui.Modal, title="Add a Recipe · Details"):
         url = self.video_url.value.strip()
         if not url.startswith(("http://", "https://")):
             await interaction.response.send_message(
-                "❌ Video URL needs to start with http:// or https://",
+                "❌ Source URL needs to start with http:// or https://",
                 ephemeral=True,
             )
             return
@@ -356,6 +356,24 @@ class ContinueToTimingView(discord.ui.View):
         await interaction.response.send_modal(
             ManualRecipeTimingModal(self.cog, self.partial_recipe)
         )
+        self.stop()
+
+
+class ManualEntryFallbackView(discord.ui.View):
+    """Offered when /recipe's automated scrape fails on any site, not just
+    TikTok. A modal can't be opened directly from a followup to an
+    already-deferred interaction (only a fresh slash command or component
+    interaction can do that), so this button click supplies the fresh
+    interaction that opens ManualRecipeModal."""
+
+    def __init__(self, cog: "Recipe", url: str):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.url = url
+
+    @discord.ui.button(label="✍️ Add Manually", style=discord.ButtonStyle.primary)
+    async def add_manually_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(ManualRecipeModal(self.cog, prefill_url=self.url))
         self.stop()
 
 
@@ -818,8 +836,9 @@ class Recipe(commands.Cog):
             print(e)
 
             await interaction.followup.send(
-                "❌ I couldn't import that recipe. "
-                "The website may be blocking automated imports."
+                "❌ I couldn't automatically import that recipe — the website may be "
+                "blocking automated imports. You can add it by hand instead:",
+                view=ManualEntryFallbackView(self, url),
             )
             return
 

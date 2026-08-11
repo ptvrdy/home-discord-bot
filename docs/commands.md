@@ -45,7 +45,7 @@ from `#general` or anywhere else.
 
 | Command | What it does |
 |---|---|
-| `/done <chore>` | Log a chore as completed (autocomplete search by name). Optionally attribute it to someone else instead of yourself, or backdate it with `days_ago` (e.g. 3 for "3 days ago"). Chore reminders post automatically in #nudges at 9am and 5pm once a chore passes its threshold. |
+| `/done <chore>` | Log a chore as completed (autocomplete search by name). Optionally attribute it to someone else instead of yourself, or backdate it with `days_ago` (e.g. 3 for "3 days ago"). Chore reminders post automatically in #nudges at 9am and 5pm once a chore passes its threshold. Refreshes #this-week immediately. |
 | `/undo_done <chore>` | Remove the most recent `/done` you logged for a chore, reverting its current state to whatever history remains. |
 | `/chore_stats` | Chore board size, overdue/coming-up counts, the single most overdue chore, a completions-per-person breakdown both all-time and over the last 30 days, and a "Whose Turn?" callout for any chore one person has done 3+ times in a row. |
 | `/weekly_digest` | Manually post the weekly recap (chores completed and by whom, one-off tasks completed, combined leaderboard, still overdue) instead of waiting for the automatic Sunday 8pm post. |

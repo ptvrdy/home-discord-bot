@@ -185,6 +185,14 @@ class Chores(commands.Cog):
             f"✅ **{updated['name']}** marked done by {member.display_name} ({when})."
         )
 
+        # Deferred import: schedule_commands imports chore_name_autocomplete
+        # from this module at load time, so importing it back at module
+        # level here would be a circular import. By call time both modules
+        # are already fully loaded, so a local import works fine.
+        from commands.schedule_commands import refresh_this_week
+
+        await refresh_this_week(self.bot)
+
     @app_commands.command(
         name="chore_stats",
         description="See household chore stats: overdue, coming up, and who's been keeping up",
