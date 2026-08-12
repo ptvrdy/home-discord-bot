@@ -24,4 +24,6 @@ DEFAULT_CHORES = [
     ("Wipe baseboards", 75),
     ("Clean the Cat Fountain", 7),  # weekly, every Saturday
     ("Replace the Cat Fountain Filter", 21),  # every 3rd Saturday
+    ("Clean the AC Filters", 14),
+    ("Deep Clean AC", 180),
 ]
