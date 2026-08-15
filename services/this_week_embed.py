@@ -21,9 +21,25 @@ MEAL_TYPES = (("breakfast", "🍳 Breakfast"), ("lunch", "🥪 Lunch"), ("dinner
 
 
 def _truncate(text: str, limit: int) -> str:
+    """Trim text to fit within limit, dropping whole trailing lines rather
+    than cutting mid-line. A day's events are each one markdown-link line
+    (`[name ↗︎](url)`); slicing mid-character can chop a link in half,
+    leaving unclosed `[`/`(` syntax that Discord then renders as literal
+    text instead of a hyperlink."""
     if len(text) <= limit:
         return text
-    return text[: limit - 1] + "…"
+
+    lines = text.split("\n")
+    kept: list[str] = []
+    length = 0
+    for line in lines:
+        addition = len(line) + (1 if kept else 0)  # +1 for the joining "\n"
+        if length + addition > limit - 1:  # -1 reserves room for the "…"
+            break
+        kept.append(line)
+        length += addition
+
+    return "\n".join(kept) + "…"
 
 
 def _event_day(event: dict) -> date:

@@ -81,6 +81,35 @@ class BuildThisWeekEmbedTests(unittest.TestCase):
         for field in embed.fields[:7]:
             self.assertNotIn("Next Week Thing", field.value)
 
+    def test_truncation_never_splits_an_event_line_mid_markdown_link(self):
+        # Many same-day events with URLs, long enough that the day's field
+        # value blows past Discord's 1,024-char field limit and has to be
+        # truncated - each event line must survive whole or be dropped
+        # entirely, never cut in the middle of its `[name ↗︎](url)` link.
+        events = [
+            _timed_event(
+                f"Event number {i} with a fairly long descriptive name",
+                MONDAY,
+                hour=(9 + i) % 14,
+                url=f"https://www.google.com/calendar/event?eid=abc{i}",
+            )
+            for i in range(30)
+        ]
+
+        embed = build_this_week_embed(MONDAY, events, [], NOW)
+
+        monday_field = next(f for f in embed.fields if f.name == "Monday, Jul 20")
+        self.assertLessEqual(len(monday_field.value), 1024)
+        for line in monday_field.value.splitlines():
+            if "](" not in line:
+                continue
+            # A markdown link's "](" must be followed by a closing ")" on
+            # the same line - a mid-link truncation would leave "](https:/
+            # /..." dangling with no ")", which Discord renders as literal
+            # text instead of a hyperlink.
+            link_start = line.index("](")
+            self.assertIn(")", line[link_start:])
+
     def test_all_day_events_sort_before_timed_events(self):
         events = [
             _timed_event("Morning Meeting", date(2026, 7, 20), 8),
