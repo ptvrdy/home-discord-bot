@@ -156,13 +156,17 @@ def build_instructions_embed(recipe: Recipe) -> discord.Embed | None:
 HELP_SECTIONS = [
     (
         "📥 Import",
-        [("/recipe <url>", "Import a recipe from the web, or by hand for TikTok/unscrapeable links.")],
+        [
+            ("/recipe <url>", "Import a recipe from the web, or by hand for TikTok/unscrapeable links."),
+            ("/manual_recipe", "Add a recipe with no source at all - a handwritten card, a friend's text, etc."),
+        ],
     ),
     (
         "🏷️ Organize & Fix",
         [
             ("/tags", "Manually add or remove this recipe's tags. (run in its thread)"),
             ("/fix", "Correct a recipe's name, times, or servings. (run in its thread)"),
+            ("/fix_image", "Add or correct a recipe's image. (run in its thread)"),
         ],
     ),
     (

@@ -29,6 +29,13 @@ Run `/help` in Discord any time for a categorized list of every command, or see
     thread instead of creating a duplicate.
   - Posts a numbered-step instructions embed as a separate follow-up message
     (4,096-character room, vs. 1,024 on a card field).
+- **`/manual_recipe`** — for a recipe with no source at all (a handwritten card, a
+  friend's text message). Same hand-entry modal as `/recipe`'s fallback, minus the
+  URL requirement — the "Source" field is free text (e.g. "Handwritten from
+  Sarah") instead of a required link. Internally stored with an empty
+  `source_url` rather than `NULL` (the DB column is `NOT NULL`, but an empty
+  string satisfies that while every place that would render a "View the original
+  recipe" link already skips it for a falsy `source_url`).
 - **`/review`** (run inside a recipe's thread) — logs that you made or reviewed a
   recipe: pick a status (📝 Needs Review / ✅ Made Before / 🔁 Make Again / ⭐
   Favorite), rate it 1–5 stars, and leave notes. Made Before / Make Again /
@@ -47,6 +54,10 @@ Run `/help` in Discord any time for a categorized list of every command, or see
   (⭐ Favorite, etc.) the recipe already has. Tags are *unioned* with what's
   already stored, not replaced, so a manual `/tags` addition never gets silently
   dropped by a later `/fix`.
+- **`/fix_image`** (run inside a recipe's thread) — adds or corrects just the
+  image, prefilled with the current URL. Separate from `/fix` since Discord caps
+  modals at 5 fields and that one's already full; leaving it blank removes the
+  image entirely.
 - **`/tags`** (run inside a recipe's thread) — a multi-select menu, pre-checked
   with the recipe's current tags, for manually adding or removing any of the 16
   non-human tags (e.g. marking a recipe `dinner` even though nothing in its text

@@ -345,6 +345,70 @@ class ManualRecipeModal(discord.ui.Modal, title="Add a Recipe · Details"):
         )
 
 
+class NoLinkRecipeModal(discord.ui.Modal, title="Add a Recipe · Details"):
+    """For recipes with no source at all - a handwritten card, a friend's
+    text message, etc. - via /manual_recipe. Distinct from ManualRecipeModal
+    (used for TikTok links and failed-scrape fallback), which requires a
+    real source URL; this one takes an optional free-text attribution
+    instead. source_url is stored as "" rather than a real link - the DB
+    column is NOT NULL but accepts an empty string, and every place that
+    renders a "View the original recipe" link already checks `if
+    recipe.source_url` (falsy for ""), so no link ever gets shown."""
+
+    recipe_name = discord.ui.TextInput(
+        label="Recipe Name",
+        max_length=100,
+    )
+    ingredients = discord.ui.TextInput(
+        label="Ingredients (one per line)",
+        style=discord.TextStyle.paragraph,
+        max_length=2000,
+    )
+    instructions = discord.ui.TextInput(
+        label="Instructions",
+        style=discord.TextStyle.paragraph,
+        required=False,
+        max_length=2000,
+    )
+    image_url = discord.ui.TextInput(
+        label="Image URL",
+        placeholder="https://... (optional)",
+        required=False,
+        max_length=300,
+    )
+    source = discord.ui.TextInput(
+        label="Source (optional)",
+        placeholder='e.g. "Handwritten from Sarah" or "Grandma\'s recipe box"',
+        required=False,
+        max_length=100,
+    )
+
+    def __init__(self, cog: "Recipe"):
+        super().__init__()
+        self.cog = cog
+
+    async def on_submit(self, interaction: discord.Interaction):
+        partial_recipe = dict(
+            title=self.recipe_name.value.strip(),
+            ingredients=[
+                line.strip()
+                for line in self.ingredients.value.splitlines()
+                if line.strip()
+            ],
+            instructions=self.instructions.value.strip() or None,
+            image_url=self.image_url.value.strip() or None,
+            source_url="",
+            source_name=self.source.value.strip() or "Hand-entered",
+        )
+
+        # Same modal-can't-open-a-modal bridge as ManualRecipeModal.
+        await interaction.response.send_message(
+            "Got it! Click below to add timing and servings.",
+            view=ContinueToTimingView(self.cog, partial_recipe),
+            ephemeral=True,
+        )
+
+
 class ContinueToTimingView(discord.ui.View):
     def __init__(self, cog: "Recipe", partial_recipe: dict):
         super().__init__(timeout=300)
@@ -447,6 +511,59 @@ class FixRecipeModal(discord.ui.Modal, title="Fix Recipe Details"):
             await starter_message.edit(embed=create_recipe_embed(recipe))
 
             await interaction.followup.send("✅ Recipe updated!", ephemeral=True)
+        except (discord.HTTPException, sqlite3.Error) as error:
+            await interaction.followup.send(
+                f"❌ I couldn't update this recipe: {error}",
+                ephemeral=True,
+            )
+
+
+class FixRecipeImageModal(discord.ui.Modal, title="Fix Recipe Image"):
+    """A separate modal from FixRecipeModal because Discord caps modals at 5
+    fields, and that one's already full (name/prep/cook/total/servings) -
+    useful on its own too, since a missing or wrong image is common when a
+    scrape partially fails or a manually-entered recipe skipped it."""
+
+    def __init__(self, cog: "Recipe", thread: discord.Thread, current: dict):
+        super().__init__()
+        self.cog = cog
+        self.thread = thread
+        self.current = current
+
+        self.image_url = discord.ui.TextInput(
+            label="Image URL",
+            placeholder="https://... (leave blank to remove the image)",
+            required=False,
+            max_length=300,
+        )
+        self.image_url.default = current.get("image_url") or ""
+        self.add_item(self.image_url)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        recipe = RecipeData(
+            title=self.current["title"],
+            ingredients=self.current["ingredients"],
+            instructions=self.current["instructions"],
+            prep_time=self.current.get("prep_time"),
+            cook_time=self.current.get("cook_time"),
+            total_time=self.current.get("total_time"),
+            total_minutes=self.current.get("total_minutes"),
+            yields=self.current.get("yields"),
+            image_url=self.image_url.value.strip() or None,
+            source_url=self.current["source_url"],
+            source_name=self.current["source_name"],
+        )
+        recipe.tags = get_recipe_tags(self.thread.id)
+
+        try:
+            save_recipe(recipe, self.thread.id)
+
+            starter_message = await self.thread.fetch_message(self.thread.id)
+            await starter_message.edit(embed=create_recipe_embed(recipe))
+
+            await interaction.followup.send("✅ Recipe image updated!", ephemeral=True)
         except (discord.HTTPException, sqlite3.Error) as error:
             await interaction.followup.send(
                 f"❌ I couldn't update this recipe: {error}",
@@ -845,6 +962,13 @@ class Recipe(commands.Cog):
         await self.publish_recipe(interaction, recipe)
 
     @app_commands.command(
+        name="manual_recipe",
+        description="Add a recipe with no source link, e.g. a handwritten recipe",
+    )
+    async def manual_recipe(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(NoLinkRecipeModal(self))
+
+    @app_commands.command(
         name="random",
         description="Get a random recipe suggestion",
     )
@@ -1167,6 +1291,33 @@ class Recipe(commands.Cog):
             return
 
         await interaction.response.send_modal(FixRecipeModal(self, channel, current))
+
+    @app_commands.command(
+        name="fix_image",
+        description="Correct or add this recipe's image (run inside its thread)",
+    )
+    async def fix_image(self, interaction: discord.Interaction):
+        channel = interaction.channel
+        if (
+            self.recipe_forum_id is None
+            or not isinstance(channel, discord.Thread)
+            or channel.parent_id != self.recipe_forum_id
+        ):
+            await interaction.response.send_message(
+                "❌ Use this command inside a recipe thread.",
+                ephemeral=True,
+            )
+            return
+
+        current = get_recipe_by_thread(channel.id)
+        if current is None:
+            await interaction.response.send_message(
+                "❌ This recipe isn't in the database yet.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.send_modal(FixRecipeImageModal(self, channel, current))
 
     @app_commands.command(
         name="check_setup",

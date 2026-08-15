@@ -9,6 +9,7 @@ from `#general` or anywhere else.
 | Command | What it does |
 |---|---|
 | `/recipe <url>` | Imports a recipe from the web, or opens a hand-entry modal for TikTok links / anything that can't be scraped. Checks for an existing import by URL first. |
+| `/manual_recipe` | Add a recipe with no source at all — a handwritten card, a friend's text, etc. Same two-step hand-entry flow as `/recipe`'s fallback, minus the URL requirement. |
 
 ## 🏷️ Organize & Fix
 
@@ -16,6 +17,7 @@ from `#general` or anywhere else.
 |---|---|
 | `/tags` **(run in its thread)** | Manually add or remove any of this recipe's tags via a checkbox menu. |
 | `/fix` **(run in its thread)** | Correct a recipe's name, prep/cook/total time, or servings — the fields most likely to come back wrong from a bad scrape. |
+| `/fix_image` **(run in its thread)** | Add or correct a recipe's image — separate from `/fix` since Discord modals cap out at 5 fields and that one's already full. Leave the URL blank to remove an image entirely. |
 
 ## 🔍 Find
 
