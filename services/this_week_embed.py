@@ -139,22 +139,32 @@ def build_this_week_embed(
             events_by_day[day].append(event)
 
     for day, day_events in events_by_day.items():
-        parts = []
+        # Office status and the waste line stay tightly stacked together
+        # as one compact header block (no blank line between them), but a
+        # blank line separates that block from the event list below - the
+        # header rows read as cramped when *everything* has a blank line
+        # between it, but the header-to-events gap still needs breathing
+        # room.
+        header_lines = []
         if show_office_status:
-            parts.append(_office_status_line(events, day, personal_name, partner_name))
+            header_lines.append(_office_status_line(events, day, personal_name, partner_name))
 
         waste_line = _waste_line(day)
         if waste_line:
-            parts.append(waste_line)
+            header_lines.append(waste_line)
 
         if day_events:
-            parts.append("\n".join(_format_event_line(event) for event in sorted(day_events, key=_event_sort_key)))
+            events_block = "\n".join(
+                _format_event_line(event) for event in sorted(day_events, key=_event_sort_key)
+            )
         else:
-            parts.append("_Nothing scheduled_")
+            events_block = "_Nothing scheduled_"
 
-        # A blank line between each part (office status, waste line, event
-        # list) - otherwise the header rows read as visually cramped
-        # together with no breathing room.
+        parts = []
+        if header_lines:
+            parts.append("\n".join(header_lines))
+        parts.append(events_block)
+
         value = _truncate("\n\n".join(parts), DAY_FIELD_LIMIT)
         embed.add_field(name=day.strftime("%A, %b %d"), value=value, inline=False)
 

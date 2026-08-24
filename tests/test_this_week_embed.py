@@ -366,7 +366,7 @@ class BuildThisWeekEmbedTests(unittest.TestCase):
         monday_field = next(f for f in embed.fields if f.name == "Monday, Jul 20")
         self.assertIn("\n\n", monday_field.value)
 
-    def test_blank_line_between_office_status_and_waste_line(self):
+    def test_no_blank_line_between_office_status_and_waste_line(self):
         events = [_all_day_event("Peyton office day", date(2026, 7, 21))]
 
         embed = build_this_week_embed(
@@ -374,9 +374,12 @@ class BuildThisWeekEmbedTests(unittest.TestCase):
         )
 
         tuesday_field = next(f for f in embed.fields if f.name == "Tuesday, Jul 21")
-        lines = tuesday_field.value.split("\n\n")
-        self.assertIn("🏢 Peyton", lines[0])
-        self.assertTrue(any("🗑️" in part for part in lines))
+        # Office status and the waste line are one tightly-stacked header
+        # block - no blank line between them specifically, even though a
+        # blank line does separate that block from the events below.
+        header_block = tuesday_field.value.split("\n\n")[0]
+        self.assertIn("🏢 Peyton", header_block)
+        self.assertIn("🗑️", header_block)
 
     def test_blank_line_between_waste_line_and_events(self):
         event = _timed_event("Trash reminder call", date(2026, 7, 21), 9)
