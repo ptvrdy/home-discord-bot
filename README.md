@@ -189,6 +189,14 @@ commands are confined to that channel; otherwise they work anywhere.
   - `/task call vet thursday` — finds a free slot specifically on Thursday.
   - `/task call vet thursday at 5pm` — skips the proposal entirely and adds it
     straight to the calendar at that exact time.
+  - `/task call vet today at 5pm` — the `today` keyword works the same as omitting
+    a day; if that time has already passed today, the booking is rejected instead
+    of silently landing in the past.
+  - `/task call vet next monday at 5pm` — a bare day name (`monday`) always means
+    its *upcoming* occurrence — this week's if it hasn't happened yet, otherwise
+    automatically rolled forward to next week (never a day that's already passed).
+    `next monday` goes one step further: it always skips today, even if today
+    itself is Monday — the disambiguator for "not this instance, the one after."
   - A proposal shows **Confirm** and **Pick Different Time** buttons. Confirm adds
     it to the calendar and refreshes `#this-week`; Pick Different Time replaces the
     message with up to 3 alternative time buttons — clicking one books it directly.

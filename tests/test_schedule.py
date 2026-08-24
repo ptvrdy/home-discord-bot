@@ -291,6 +291,36 @@ class ParseTaskRequestTests(unittest.TestCase):
         self.assertEqual(parsed["name"], "wipe out the fridge")
         self.assertEqual(parsed["day"], "thursday")
 
+    def test_today_keyword(self):
+        self.assertEqual(
+            parse_task_request("clean shower drain today at 5pm"),
+            {"name": "clean shower drain", "day": "today", "time": time(17, 0)},
+        )
+
+    def test_today_without_time(self):
+        self.assertEqual(
+            parse_task_request("call vet today"),
+            {"name": "call vet", "day": "today", "time": None},
+        )
+
+    def test_next_weekday(self):
+        self.assertEqual(
+            parse_task_request("clean shower drain next monday at 4pm"),
+            {"name": "clean shower drain", "day": "next monday", "time": time(16, 0)},
+        )
+
+    def test_next_weekday_without_time(self):
+        self.assertEqual(
+            parse_task_request("call vet next thursday"),
+            {"name": "call vet", "day": "next thursday", "time": None},
+        )
+
+    def test_next_is_case_insensitive(self):
+        self.assertEqual(
+            parse_task_request("call vet NEXT Monday at 5PM"),
+            {"name": "call vet", "day": "next monday", "time": time(17, 0)},
+        )
+
 
 class ParseClockTimeTests(unittest.TestCase):
     def test_pm_time(self):
@@ -325,14 +355,44 @@ class ResolveDayTests(unittest.TestCase):
         tuesday = date(2026, 7, 21)
         self.assertEqual(resolve_day("thursday", tuesday), date(2026, 7, 23))
 
-    def test_resolves_a_day_earlier_in_the_week_than_today(self):
-        # "today" is Thursday, asking for Monday should still resolve to
-        # this week's Monday, not skip ahead to next week.
+    def test_rolls_forward_to_next_week_when_the_day_already_passed(self):
+        # "today" is Thursday; asking for Monday must mean the UPCOMING
+        # Monday, not this week's (already past) one - that's the actual
+        # bug being fixed here (it used to return the past date).
         thursday = date(2026, 7, 23)
-        self.assertEqual(resolve_day("monday", thursday), date(2026, 7, 20))
+        self.assertEqual(resolve_day("monday", thursday), date(2026, 7, 27))
+
+    def test_plain_weekday_on_that_same_day_means_today(self):
+        monday = date(2026, 7, 20)
+        self.assertEqual(resolve_day("monday", monday), monday)
 
     def test_case_insensitive(self):
         self.assertEqual(resolve_day("THURSDAY", date(2026, 7, 21)), date(2026, 7, 23))
+
+    def test_today_keyword_returns_today(self):
+        self.assertEqual(resolve_day("today", date(2026, 7, 23)), date(2026, 7, 23))
+
+    def test_today_keyword_is_case_insensitive(self):
+        self.assertEqual(resolve_day("TODAY", date(2026, 7, 23)), date(2026, 7, 23))
+
+    def test_next_weekday_still_upcoming_this_week_matches_plain(self):
+        # "next thursday" said on a Tuesday, with Thursday still ahead this
+        # week, means the same thing as plain "thursday".
+        tuesday = date(2026, 7, 21)
+        self.assertEqual(resolve_day("next thursday", tuesday), date(2026, 7, 23))
+
+    def test_next_weekday_on_that_same_day_skips_to_next_week(self):
+        # Unlike plain "monday" (which means today when today is Monday),
+        # "next monday" must skip today and mean the following week.
+        monday = date(2026, 7, 20)
+        self.assertEqual(resolve_day("next monday", monday), date(2026, 7, 27))
+
+    def test_next_weekday_already_passed_this_week_rolls_forward(self):
+        thursday = date(2026, 7, 23)
+        self.assertEqual(resolve_day("next monday", thursday), date(2026, 7, 27))
+
+    def test_next_is_case_insensitive(self):
+        self.assertEqual(resolve_day("NEXT Monday", date(2026, 7, 20)), date(2026, 7, 27))
 
 
 HOUSEHOLD_TZ = timezone(timedelta(hours=-4))  # fixed-offset stand-in; avoids depending on tzdata

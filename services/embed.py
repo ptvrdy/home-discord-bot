@@ -213,7 +213,7 @@ HELP_SECTIONS = [
     (
         "📅 Schedule",
         [
-            ("/task <request>", 'Schedule a quick one-off task, e.g. "call vet" or "call vet thursday at 5pm". Proposes a free slot for you to confirm, unless you gave an exact time.'),
+            ("/task <request>", 'Schedule a quick one-off task, e.g. "call vet", "call vet today at 5pm", or "call vet next monday at 5pm". Proposes a free slot to confirm unless you gave an exact time; a day that already passed this week rolls to its upcoming occurrence.'),
             ("/week", "Schedule up to 5 one-off tasks this week — autocomplete suggests your chores, but you can type anything. Proposes a free slot for each."),
             ("/refresh_this_week", "Manually rebuild the #this-week schedule embed instead of waiting for the daily refresh."),
         ],

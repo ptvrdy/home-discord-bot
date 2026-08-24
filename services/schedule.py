@@ -49,14 +49,22 @@ def _build_time(hour_str: str, minute_str: str | None, period: str) -> time:
     return time(hour, minute)
 
 
+DAY_KEYWORDS = WEEKDAYS + ["today"]
+
+
 def parse_task_request(text: str) -> dict:
     """Parse the free text after /task into {"name", "day", "time"}.
 
-    Recognizes an optional trailing weekday name, optionally followed by
-    "at H(:MM)am/pm":
-      "call vet"                 -> {"name": "call vet", "day": None, "time": None}
-      "call vet thursday"        -> {"name": "call vet", "day": "thursday", "time": None}
-      "call vet thursday at 5pm" -> {"name": "call vet", "day": "thursday", "time": time(17, 0)}
+    Recognizes an optional trailing day keyword - a weekday name or "today" -
+    with an optional leading "next", optionally followed by "at H(:MM)am/pm":
+      "call vet"                      -> {"name": "call vet", "day": None, "time": None}
+      "call vet thursday"             -> {"name": "call vet", "day": "thursday", "time": None}
+      "call vet thursday at 5pm"      -> {"name": "call vet", "day": "thursday", "time": time(17, 0)}
+      "call vet today at 5pm"         -> {"name": "call vet", "day": "today", "time": time(17, 0)}
+      "call vet next monday at 5pm"   -> {"name": "call vet", "day": "next monday", "time": time(17, 0)}
+
+    The "day" value is handed to resolve_day(), which does the actual
+    date math - this function only extracts the words.
     """
     remaining = text.strip()
 
@@ -68,10 +76,14 @@ def parse_task_request(text: str) -> dict:
         parsed_time = _build_time(time_match.group(1), time_match.group(2), time_match.group(3))
         remaining = remaining[: time_match.start()]
 
-    day_match = re.search(r"\s+(" + "|".join(WEEKDAYS) + r")\s*$", remaining, re.IGNORECASE)
+    day_match = re.search(
+        r"\s+(next\s+)?(" + "|".join(DAY_KEYWORDS) + r")\s*$", remaining, re.IGNORECASE
+    )
     day = None
     if day_match:
-        day = day_match.group(1).lower()
+        is_next = bool(day_match.group(1))
+        day_name = day_match.group(2).lower()
+        day = f"next {day_name}" if is_next and day_name != "today" else day_name
         remaining = remaining[: day_match.start()]
 
     return {"name": remaining.strip(), "day": day, "time": parsed_time}
@@ -90,12 +102,37 @@ def parse_clock_time(text: str) -> time | None:
 
 
 def resolve_day(day_name: str | None, today: date) -> date | None:
-    """Map a weekday name to its date within the week containing `today`
-    (week starts Monday). Returns None if no day name was given."""
+    """Map a day keyword to an actual date - always today or later, never a
+    day earlier this week that's already passed. Returns None if no day name
+    was given.
+
+    - "today" -> today, always.
+    - A plain weekday name ("monday") -> the next occurrence of that
+      weekday on or after today (today itself, if today is that weekday).
+    - "next <weekday>" -> the occurrence strictly after today, even when
+      today already is that weekday - disambiguates "next monday" (skip
+      today, mean the following week) from plain "monday" (today counts).
+    """
     if day_name is None:
         return None
+
+    day_name = day_name.lower()
+    if day_name == "today":
+        return today
+
+    is_next = day_name.startswith("next ")
+    weekday_name = day_name[len("next "):] if is_next else day_name
+
     week_start = get_week_start(today)
-    return week_start + timedelta(days=WEEKDAYS.index(day_name.lower()))
+    candidate = week_start + timedelta(days=WEEKDAYS.index(weekday_name))
+
+    if is_next:
+        if candidate <= today:
+            candidate += timedelta(days=7)
+    elif candidate < today:
+        candidate += timedelta(days=7)
+
+    return candidate
 
 
 def office_event_name(person_name: str) -> str:

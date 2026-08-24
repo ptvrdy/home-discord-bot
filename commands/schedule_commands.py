@@ -659,6 +659,12 @@ class Schedule(commands.Cog):
         if parsed["time"] is not None:
             target_day = day or today
             start = datetime.combine(target_day, parsed["time"], tzinfo=HOUSEHOLD_TZ)
+            if start < now:
+                await interaction.followup.send(
+                    f"❌ {format_time(start)} on {format_day_label(target_day)} has already "
+                    "passed — try a different day or time."
+                )
+                return
             end = start + timedelta(minutes=duration_minutes)
             try:
                 calendar_id = default_write_calendar_id()
