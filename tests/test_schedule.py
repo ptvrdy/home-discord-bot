@@ -16,6 +16,7 @@ from services.schedule import (
     office_event_name,
     parse_clock_time,
     parse_task_request,
+    previous_week_start,
     resolve_day,
 )
 
@@ -32,6 +33,27 @@ class GetWeekStartTests(unittest.TestCase):
     def test_sunday_returns_that_weeks_monday_not_next(self):
         sunday = date(2026, 7, 26)
         self.assertEqual(get_week_start(sunday), date(2026, 7, 20))
+
+
+class PreviousWeekStartTests(unittest.TestCase):
+    def test_sunday_returns_the_monday_of_the_week_that_just_ended(self):
+        # This is the exact bug: the automatic weekly digest runs Sunday
+        # night, and used to recap two weeks back instead of one because
+        # get_week_start(sunday) - 7 days skips an extra week.
+        sunday = date(2026, 8, 23)
+        self.assertEqual(previous_week_start(sunday), date(2026, 8, 17))
+
+    def test_monday_returns_the_prior_full_week(self):
+        monday = date(2026, 8, 24)
+        self.assertEqual(previous_week_start(monday), date(2026, 8, 17))
+
+    def test_wednesday_returns_the_prior_full_week(self):
+        wednesday = date(2026, 8, 26)
+        self.assertEqual(previous_week_start(wednesday), date(2026, 8, 17))
+
+    def test_saturday_returns_the_prior_full_week(self):
+        saturday = date(2026, 8, 29)
+        self.assertEqual(previous_week_start(saturday), date(2026, 8, 17))
 
 
 class NormalizeEventTests(unittest.TestCase):

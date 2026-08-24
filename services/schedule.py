@@ -28,6 +28,21 @@ def get_week_start(reference: date) -> date:
     return reference - timedelta(days=reference.weekday())
 
 
+def previous_week_start(today: date) -> date:
+    """The Monday of the most recently *completed* Monday-Sunday week as of
+    `today` - used by the weekly digest, which always recaps a week that's
+    already wrapped up. A Sunday counts as that week being done (the
+    automatic digest posts Sunday night, right at that week's own tail
+    end), so calling this on a Sunday returns the Monday of the week
+    containing that Sunday, not the Monday of the week before it - the
+    bug this function fixes was the digest recapping two weeks back
+    instead of one on its actual Sunday-night run."""
+    week_start = get_week_start(today)
+    if today.weekday() == 6:  # Sunday - this week just wrapped up
+        return week_start
+    return week_start - timedelta(days=7)
+
+
 def format_time(moment: datetime) -> str:
     """Format a time portably (avoids strftime's platform-specific no-pad
     flags, e.g. %-I isn't available on Windows)."""

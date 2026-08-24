@@ -31,7 +31,7 @@ from services.database import (
     set_state,
     undo_last_done,
 )
-from services.schedule import get_week_start
+from services.schedule import previous_week_start
 from services.weekly_digest_embed import build_weekly_digest_embed
 
 
@@ -75,11 +75,10 @@ async def post_weekly_digest(bot: commands.Bot) -> None:
         return
 
     now = datetime.now(HOUSEHOLD_TZ)
-    this_week_start = get_week_start(now.date())
-    last_week_start = this_week_start - timedelta(days=7)
+    last_week_start = previous_week_start(now.date())
 
     range_start = datetime.combine(last_week_start, datetime.min.time(), tzinfo=HOUSEHOLD_TZ)
-    range_end = datetime.combine(this_week_start, datetime.min.time(), tzinfo=HOUSEHOLD_TZ)
+    range_end = range_start + timedelta(days=7)
 
     completions = get_chore_completions_between(range_start, range_end)
     tasks = get_completed_tasks_between(range_start, range_end)
