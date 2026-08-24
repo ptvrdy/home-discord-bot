@@ -353,7 +353,7 @@ class BuildThisWeekEmbedTests(unittest.TestCase):
         overdue_field = next(f for f in embed.fields if f.name == "🧹 Chores Overdue")
         self.assertNotIn("'s turn", overdue_field.value)
 
-    def test_no_blank_line_between_office_status_and_events(self):
+    def test_blank_line_between_office_status_and_events(self):
         events = [
             _all_day_event("Peyton office day", MONDAY),
             _timed_event("Vet Appointment", MONDAY, 9),
@@ -364,7 +364,33 @@ class BuildThisWeekEmbedTests(unittest.TestCase):
         )
 
         monday_field = next(f for f in embed.fields if f.name == "Monday, Jul 20")
-        self.assertNotIn("\n\n", monday_field.value)
+        self.assertIn("\n\n", monday_field.value)
+
+    def test_blank_line_between_office_status_and_waste_line(self):
+        events = [_all_day_event("Peyton office day", date(2026, 7, 21))]
+
+        embed = build_this_week_embed(
+            MONDAY, events, [], NOW, personal_name="Peyton", partner_name="Joe"
+        )
+
+        tuesday_field = next(f for f in embed.fields if f.name == "Tuesday, Jul 21")
+        lines = tuesday_field.value.split("\n\n")
+        self.assertIn("🏢 Peyton", lines[0])
+        self.assertTrue(any("🗑️" in part for part in lines))
+
+    def test_blank_line_between_waste_line_and_events(self):
+        event = _timed_event("Trash reminder call", date(2026, 7, 21), 9)
+
+        embed = build_this_week_embed(MONDAY, [event], [], NOW)
+
+        tuesday_field = next(f for f in embed.fields if f.name == "Tuesday, Jul 21")
+        parts = tuesday_field.value.split("\n\n")
+        self.assertTrue(any("🗑️" in part for part in parts))
+        self.assertTrue(any("Trash reminder call" in part for part in parts))
+        # They must be different parts (separated by a blank line), not the
+        # same one.
+        waste_part = next(part for part in parts if "🗑️" in part)
+        self.assertNotIn("Trash reminder call", waste_part)
 
 
 if __name__ == "__main__":

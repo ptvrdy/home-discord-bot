@@ -257,9 +257,9 @@ class FormatEventSourcesTests(unittest.TestCase):
 
 class FormatTimeTests(unittest.TestCase):
     def test_morning_time(self):
-        # A single-digit hour is padded with a figure space (U+2007) so it
-        # lines up with double-digit hours elsewhere in the same list.
-        self.assertEqual(format_time(datetime(2026, 7, 20, 9, 5)), " 9:05 AM")
+        # A single-digit hour is zero-padded so it lines up with
+        # double-digit hours elsewhere in the same list.
+        self.assertEqual(format_time(datetime(2026, 7, 20, 9, 5)), "09:05 AM")
 
     def test_noon(self):
         self.assertEqual(format_time(datetime(2026, 7, 20, 12, 0)), "12:00 PM")
@@ -268,7 +268,7 @@ class FormatTimeTests(unittest.TestCase):
         self.assertEqual(format_time(datetime(2026, 7, 20, 0, 0)), "12:00 AM")
 
     def test_afternoon_time(self):
-        self.assertEqual(format_time(datetime(2026, 7, 20, 17, 30)), " 5:30 PM")
+        self.assertEqual(format_time(datetime(2026, 7, 20, 17, 30)), "05:30 PM")
 
     def test_ten_and_eleven_oclock_are_not_padded(self):
         self.assertEqual(format_time(datetime(2026, 7, 20, 10, 0)), "10:00 AM")

@@ -45,15 +45,16 @@ def previous_week_start(today: date) -> date:
 
 def format_time(moment: datetime) -> str:
     """Format a time portably (avoids strftime's platform-specific no-pad
-    flags, e.g. %-I isn't available on Windows). A single-digit hour is
-    padded with a figure space (U+2007 - the same width as a digit in
-    fonts that support it, unlike a regular space) so times still line up
-    in a list next to a double-digit hour, e.g. "9:00 AM" and "12:00 PM"
-    both start their text at the same horizontal position."""
+    flags, e.g. %-I isn't available on Windows). Hour is zero-padded (e.g.
+    "09:00 AM") rather than space-padded - a figure space (U+2007) is
+    supposed to match a digit's width but wasn't reliably honored by
+    Discord's font, so times didn't actually line up. A real digit is
+    guaranteed the same width as any other digit in virtually any font,
+    so "09:00 AM" and "12:00 PM" reliably start their text at the same
+    horizontal position."""
     hour = moment.hour % 12 or 12
     period = "AM" if moment.hour < 12 else "PM"
-    hour_str = str(hour) if hour >= 10 else f" {hour}"
-    return f"{hour_str}:{moment.minute:02d} {period}"
+    return f"{hour:02d}:{moment.minute:02d} {period}"
 
 
 def format_day_label(day: date) -> str:

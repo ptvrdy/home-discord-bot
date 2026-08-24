@@ -152,7 +152,10 @@ def build_this_week_embed(
         else:
             parts.append("_Nothing scheduled_")
 
-        value = _truncate("\n".join(parts), DAY_FIELD_LIMIT)
+        # A blank line between each part (office status, waste line, event
+        # list) - otherwise the header rows read as visually cramped
+        # together with no breathing room.
+        value = _truncate("\n\n".join(parts), DAY_FIELD_LIMIT)
         embed.add_field(name=day.strftime("%A, %b %d"), value=value, inline=False)
 
     embed.add_field(
