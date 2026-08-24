@@ -80,6 +80,9 @@ Once a task is booked, its confirmation message gets a ✅ reaction pre-added �
 it once you've actually done the task to mark it completed (anyone in the server can,
 not just whoever booked it). This also prefixes the event's title on the calendar
 itself with ✅, so it's visibly distinguished if you check Google Calendar directly.
+The completion message shows the event's *current* date/time (re-fetched from Google
+Calendar), so it stays accurate even if you'd manually rescheduled the task there
+since it was originally booked.
 
 Overdue/coming-up chores on #this-week (and the "Whose Turn?" list in `/chore_stats`,
 and the `#nudges` reminder) get a "whose turn?" callout whenever one household member

@@ -546,9 +546,27 @@ class Schedule(commands.Cog):
         if result is None:
             return  # already marked completed - don't re-fire on a second reaction
 
+        # Re-fetch the event's current date/time rather than trusting the
+        # original confirmation message's text, which goes stale if the
+        # task was manually rescheduled in Google Calendar after being
+        # booked - without this, the completion message would keep
+        # whatever day it was originally proposed for, even if that's not
+        # when it actually got done.
+        when = ""
+        try:
+            raw_event = get_event(task["event_id"], calendar_id=task["calendar_id"])
+            current = normalize_event(raw_event, "current", household_tz=HOUSEHOLD_TZ)
+            if isinstance(current["start"], datetime):
+                when = f" — {format_day_label(current['start'].date())} at {format_time(current['start'])}"
+        except Exception:
+            pass  # not fatal - just skip the date detail if the event can't be fetched
+
         try:
             message = await channel.fetch_message(payload.message_id)
-            await message.edit(content=f"{message.content}\n✅ Marked done by {completed_by}.", view=None)
+            await message.edit(
+                content=f"✅ **{task['task_name']}**{when} — marked done by {completed_by}.",
+                view=None,
+            )
         except discord.HTTPException:
             pass
 

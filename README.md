@@ -237,11 +237,17 @@ commands are confined to that channel; otherwise they work anywhere.
 - Once a task is booked, the confirmation message gets a **✅ reaction pre-added**
   to it — react to it (anyone in the server, not just whoever booked it) once
   you've actually done the task to mark it completed. This is separate from the
-  recurring-chore `/done` system, since one-off tasks aren't chores; it appends a
-  "Marked done by X" note, removes the Undo button, and prefixes the event's
-  title on the calendar itself with ✅ (so it's visibly distinguished if you look
-  at Google Calendar directly, outside Discord) — `#this-week` picks up the new
-  title on its next refresh, same as any other event name change.
+  recurring-chore `/done` system, since one-off tasks aren't chores; it rewrites
+  the message to a "✅ **Task** — Day, Mon DD at H:MM — marked done by X" summary,
+  removes the Undo button, and prefixes the event's title on the calendar itself
+  with ✅ (so it's visibly distinguished if you look at Google Calendar directly,
+  outside Discord) — `#this-week` picks up the new title on its next refresh,
+  same as any other event name change. The completion message's date/time is
+  re-fetched from Google Calendar at the moment you react, not carried over from
+  the original booking — so if you'd manually rescheduled the event in Google
+  Calendar since it was booked (found by its event ID, which a reschedule
+  doesn't change), completing it still shows accurate, current information
+  instead of stale text from whenever it was first proposed.
 - To change an already-booked task's time or duration without cancelling and
   redoing it, right-click (or long-press on mobile) its confirmation message →
   **Apps → Edit Task Time**. A form asks for a new time, optionally a new day
