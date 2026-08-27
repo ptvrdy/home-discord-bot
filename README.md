@@ -188,7 +188,9 @@ commands are confined to that channel; otherwise they work anywhere.
   - `/task call vet` — finds a free 30-minute slot anywhere this week and proposes it.
   - `/task call vet thursday` — finds a free slot specifically on Thursday.
   - `/task call vet thursday at 5pm` — skips the proposal entirely and adds it
-    straight to the calendar at that exact time.
+    straight to the calendar at that exact time, still checking for a conflict
+    first — if something's already booked then, nothing gets added (and no
+    ✅ reaction gets left behind implying it worked).
   - `/task call vet today at 5pm` — the `today` keyword works the same as omitting
     a day; if that time has already passed today, the booking is rejected instead
     of silently landing in the past.

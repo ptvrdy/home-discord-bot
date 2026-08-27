@@ -684,6 +684,20 @@ class Schedule(commands.Cog):
                 )
                 return
             end = start + timedelta(minutes=duration_minutes)
+
+            try:
+                events = get_week_events(get_week_start(target_day))
+            except Exception as error:
+                await interaction.followup.send(f"❌ I couldn't check the calendar: {error}")
+                return
+
+            if has_conflict(events, start, end, HOUSEHOLD_TZ):
+                await interaction.followup.send(
+                    f"⚠️ Something's already scheduled then — **{parsed['name']}** wasn't "
+                    "added. Try a different day or time."
+                )
+                return
+
             try:
                 calendar_id = default_write_calendar_id()
                 created = create_event(parsed["name"], start, end, calendar_id=calendar_id)
