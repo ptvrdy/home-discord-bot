@@ -167,6 +167,7 @@ HELP_SECTIONS = [
             ("/tags", "Manually add or remove this recipe's tags. (run in its thread)"),
             ("/fix", "Correct a recipe's name, times, or servings. (run in its thread)"),
             ("/fix_image", "Add or correct a recipe's image. (run in its thread)"),
+            ("/add_instructions", "Append steps to a recipe's instructions. (run in its thread)"),
         ],
     ),
     (

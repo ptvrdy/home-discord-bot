@@ -28,7 +28,7 @@ from services.database import (
     set_recipe_tags,
     update_recipe_status,
 )
-from services.embed import build_help_embed, build_stats_embed, create_recipe_embed
+from services.embed import build_help_embed, build_instructions_embed, build_stats_embed, create_recipe_embed
 from services.forum import (
     HUMAN_TAGS,
     create_recipe_post,
@@ -564,6 +564,74 @@ class FixRecipeImageModal(discord.ui.Modal, title="Fix Recipe Image"):
             await starter_message.edit(embed=create_recipe_embed(recipe))
 
             await interaction.followup.send("✅ Recipe image updated!", ephemeral=True)
+        except (discord.HTTPException, sqlite3.Error) as error:
+            await interaction.followup.send(
+                f"❌ I couldn't update this recipe: {error}",
+                ephemeral=True,
+            )
+
+
+class AddInstructionsModal(discord.ui.Modal, title="Add Recipe Steps"):
+    """Appends steps to a recipe's instructions rather than replacing them
+    wholesale - useful when a scrape or manual entry missed the tail end of
+    a recipe. A separate modal from FixRecipeModal for the same 5-field-cap
+    reason as FixRecipeImageModal, but also deliberately append-only: the
+    instructions follow-up embed isn't tracked by message ID (unlike the
+    journal), so there's nothing to prefill accurately against - asking for
+    just the new steps avoids re-typing everything that's already there."""
+
+    def __init__(self, cog: "Recipe", thread: discord.Thread, current: dict):
+        super().__init__()
+        self.cog = cog
+        self.thread = thread
+        self.current = current
+
+        self.additional_steps = discord.ui.TextInput(
+            label="Steps to add (appended to the end)",
+            style=discord.TextStyle.paragraph,
+            placeholder="One step per line - added after whatever instructions are already saved.",
+            max_length=2000,
+        )
+        self.add_item(self.additional_steps)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        existing = self.current.get("instructions") or ""
+        new_steps = self.additional_steps.value.strip()
+        merged_instructions = f"{existing}\n{new_steps}" if existing else new_steps
+
+        recipe = RecipeData(
+            title=self.current["title"],
+            ingredients=self.current["ingredients"],
+            instructions=merged_instructions,
+            prep_time=self.current.get("prep_time"),
+            cook_time=self.current.get("cook_time"),
+            total_time=self.current.get("total_time"),
+            total_minutes=self.current.get("total_minutes"),
+            yields=self.current.get("yields"),
+            image_url=self.current.get("image_url"),
+            source_url=self.current["source_url"],
+            source_name=self.current["source_name"],
+        )
+        recipe.tags = get_recipe_tags(self.thread.id)
+
+        try:
+            save_recipe(recipe, self.thread.id)
+
+            # The instructions embed isn't tracked by message ID (unlike the
+            # journal message), so there's nothing to edit in place - post a
+            # fresh one instead. The old one (and any manual comment used as
+            # a stopgap) can be deleted by hand if it's now redundant.
+            instructions_embed = build_instructions_embed(recipe)
+            if instructions_embed is not None:
+                await self.thread.send(embed=instructions_embed)
+
+            await interaction.followup.send(
+                "✅ Steps added! Posted a fresh instructions embed below - feel free to "
+                "delete the old one (and any manual comment) if it's now redundant.",
+                ephemeral=True,
+            )
         except (discord.HTTPException, sqlite3.Error) as error:
             await interaction.followup.send(
                 f"❌ I couldn't update this recipe: {error}",
@@ -1318,6 +1386,33 @@ class Recipe(commands.Cog):
             return
 
         await interaction.response.send_modal(FixRecipeImageModal(self, channel, current))
+
+    @app_commands.command(
+        name="add_instructions",
+        description="Append steps to this recipe's instructions (run inside its thread)",
+    )
+    async def add_instructions(self, interaction: discord.Interaction):
+        channel = interaction.channel
+        if (
+            self.recipe_forum_id is None
+            or not isinstance(channel, discord.Thread)
+            or channel.parent_id != self.recipe_forum_id
+        ):
+            await interaction.response.send_message(
+                "❌ Use this command inside a recipe thread.",
+                ephemeral=True,
+            )
+            return
+
+        current = get_recipe_by_thread(channel.id)
+        if current is None:
+            await interaction.response.send_message(
+                "❌ This recipe isn't in the database yet.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.send_modal(AddInstructionsModal(self, channel, current))
 
     @app_commands.command(
         name="check_setup",

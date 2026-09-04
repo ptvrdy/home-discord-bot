@@ -58,6 +58,14 @@ Run `/help` in Discord any time for a categorized list of every command, or see
   image, prefilled with the current URL. Separate from `/fix` since Discord caps
   modals at 5 fields and that one's already full; leaving it blank removes the
   image entirely.
+- **`/add_instructions`** (run inside a recipe's thread) — appends new steps to
+  the end of a recipe's instructions instead of replacing them, for when a
+  scrape or manual entry missed the tail end. Takes just the new steps (not the
+  whole thing) since the instructions follow-up message isn't tracked by ID the
+  way the journal message is, so there's nothing to prefill accurately against
+  or edit in place — it posts a fresh instructions embed with the combined text
+  instead; the old one (and any manual comment used as a stopgap) can be deleted
+  by hand once it's redundant.
 - **`/tags`** (run inside a recipe's thread) — a multi-select menu, pre-checked
   with the recipe's current tags, for manually adding or removing any of the 16
   non-human tags (e.g. marking a recipe `dinner` even though nothing in its text

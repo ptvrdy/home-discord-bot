@@ -18,6 +18,7 @@ from `#general` or anywhere else.
 | `/tags` **(run in its thread)** | Manually add or remove any of this recipe's tags via a checkbox menu. |
 | `/fix` **(run in its thread)** | Correct a recipe's name, prep/cook/total time, or servings — the fields most likely to come back wrong from a bad scrape. |
 | `/fix_image` **(run in its thread)** | Add or correct a recipe's image — separate from `/fix` since Discord modals cap out at 5 fields and that one's already full. Leave the URL blank to remove an image entirely. |
+| `/add_instructions` **(run in its thread)** | Append steps to a recipe's instructions — useful when a scrape or manual entry missed the tail end. Posts a fresh instructions embed with the combined steps (the old one isn't tracked, so it can't be edited in place — delete it by hand if it's now redundant). |
 
 ## 🔍 Find
 
