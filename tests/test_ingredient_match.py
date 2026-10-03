@@ -103,5 +103,65 @@ class MatchingTests(unittest.TestCase):
         self.assertEqual(display_name("2 lbs boneless chicken thighs"), "Chicken thigh")
 
 
+# Real titles from the live Trader Joe's catalog that tripped up a naive
+# "shortest title wins" matcher.
+REAL_TJ_CATALOG = [
+    {"name": "Marshmallow Eggs", "category": "Snacks & Sweets", "subcategory": "Candies & Cookies"},
+    {"name": "Pasture Raised Large Brown Eggs", "category": "Dairy & Eggs", "subcategory": "Eggs"},
+    {"name": "Fig Butter", "category": "For the Pantry", "subcategory": "Nut Butters & Fruit Spreads"},
+    {"name": "Cultured Salted Butter", "category": "Dairy & Eggs", "subcategory": "Butter"},
+    {"name": "Energy Bar Peanut Butter", "category": "Snacks & Sweets", "subcategory": "Bars, Jerky &… Surprises"},
+    {"name": "Peanut Butter Creamy Salted", "category": "For the Pantry", "subcategory": "Nut Butters & Fruit Spreads"},
+    {"name": "Egg Nog Greek Yogurt", "category": "Dairy & Eggs", "subcategory": "Yogurt, etc."},
+    {"name": "Greek Lowfat Yogurt Plain", "category": "Dairy & Eggs", "subcategory": "Yogurt, etc."},
+    {"name": "Shredded Mozzarella Cheese", "category": "Cheese", "subcategory": "Slices, Shreds, Crumbles"},
+    {"name": "Crispy Garlic", "category": "Snacks & Sweets", "subcategory": "Chips, Crackers & Crunchy Bites"},
+    {"name": "Orange Peach Mango Juice", "category": "Juices & More", "subcategory": None},
+    {"name": "100% Orange Juice No Pulp", "category": "Juices & More", "subcategory": None},
+    {"name": "Organic Milk A2/A2", "category": "Dairy & Eggs", "subcategory": "Milk & Cream"},
+    {"name": "Organic Coconut Milk", "category": "For the Pantry", "subcategory": "Packaged Fish, Meat, Fruit & Veg"},
+    {"name": "Petite Peas", "category": "From The Freezer", "subcategory": "Fruit & Vegetables"},
+]
+
+
+class RealCatalogTests(unittest.TestCase):
+    def assertMatches(self, query, expected):
+        match = best_tj_match(query, REAL_TJ_CATALOG)
+        self.assertEqual(match.item["name"] if match else None, expected, query)
+
+    def test_plain_staples_beat_flavored_and_candy_versions(self):
+        self.assertMatches("eggs", "Pasture Raised Large Brown Eggs")
+        self.assertMatches("butter", "Cultured Salted Butter")
+        self.assertMatches("greek yogurt", "Greek Lowfat Yogurt Plain")
+        self.assertMatches("orange juice", "100% Orange Juice No Pulp")
+        self.assertMatches("milk", "Organic Milk A2/A2")
+
+    def test_trailing_descriptors_and_cheese(self):
+        self.assertMatches("peanut butter", "Peanut Butter Creamy Salted")
+        self.assertMatches("shredded mozzarella", "Shredded Mozzarella Cheese")
+        self.assertMatches("frozen peas", "Petite Peas")
+
+    def test_snack_only_matches_are_rejected(self):
+        self.assertMatches("garlic", None)
+
+
+class RecipeLineTests(unittest.TestCase):
+    def test_or_lines_match_either_option(self):
+        products = [{"id": 1, "name": "Pickle"}, {"id": 2, "name": "Lettuce"}, {"id": 3, "name": "Linguine"}]
+        self.assertEqual(best_product_match("1 tbs relish or pickles", products).item["id"], 1)
+        self.assertEqual(best_product_match("Red or green leaf lettuce, for serving", products).item["id"], 2)
+        self.assertEqual(best_product_match("1 pound linguine or other long pasta", products).item["id"], 3)
+        self.assertEqual(normalize_item("Red or green leaf lettuce, for serving"), "green leaf lettuce")
+
+    def test_hot_sauce_and_hyphens(self):
+        self.assertEqual(normalize_item("½ teaspoon hot sauce"), "hot sauce")
+        self.assertEqual(normalize_item("1 pound extra-large (16 to 20 count) shrimp, shelled"), "shrimp")
+        self.assertEqual(normalize_item("¼ cup extra-virgin olive oil, plus more"), "virgin olive oil")
+
+    def test_cheese_suffix(self):
+        self.assertEqual(normalize_item("1 cup shredded cheddar cheese"), "cheddar")
+        self.assertEqual(normalize_item("8 oz cream cheese, softened"), "cream cheese")
+
+
 if __name__ == "__main__":
     unittest.main()

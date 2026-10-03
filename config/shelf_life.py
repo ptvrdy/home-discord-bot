@@ -33,6 +33,56 @@ SHELF_LIFE_RULES: list[tuple[str, str | None, dict]] = [
 DEFAULT_RULE = {"location": PANTRY, "days": NEVER_EXPIRES, "freezer_days": NEVER_EXPIRES}
 
 
+# TJ's online catalog skips a lot of basic produce (no plain broccoli,
+# limes, cilantro, or celery) and some meat cuts. For anything with no
+# believable TJ's match, these keywords still put it in the right aisle -
+# and so the right location and shelf life. Matched against the item's
+# normalized words; first rule with a hit wins.
+KEYWORD_CATEGORIES: list[tuple[set[str], str, str | None]] = [
+    ({"chicken", "turkey", "drumstick", "wing"}, "Meat, Seafood & Plant-based", "Chicken & Turkey"),
+    ({"beef", "steak", "pork", "chop", "lamb", "sausage", "bacon", "brisket", "ribeye",
+      "sirloin", "veal", "ham", "chorizo", "prosciutto"}, "Meat, Seafood & Plant-based", "Beef, Pork & Lamb"),
+    ({"salmon", "shrimp", "fish", "cod", "tuna", "tilapia", "scallop", "halibut", "crab",
+      "mussel", "clam", "trout"}, "Meat, Seafood & Plant-based", "Fish & Seafood"),
+    ({"milk", "egg", "butter", "yogurt", "cream", "kefir"}, "Dairy & Eggs", None),
+    ({"cheese", "cheddar", "mozzarella", "parmesan", "feta", "brie", "gouda", "ricotta",
+      "provolone", "gruyere", "manchego"}, "Cheese", None),
+    ({"broccoli", "lime", "lemon", "cilantro", "parsley", "basil", "mint", "dill", "celery",
+      "onion", "garlic", "shallot", "ginger", "lettuce", "kale", "spinach", "arugula",
+      "cabbage", "carrot", "potato", "tomato", "pepper", "jalapeno", "zucchini", "squash",
+      "cucumber", "mushroom", "asparagus", "cauliflower", "bean", "pea", "corn", "avocado",
+      "apple", "banana", "orange", "berry", "strawberry", "blueberry", "raspberry", "grape",
+      "pear", "peach", "plum", "mango", "pineapple", "melon", "watermelon", "cherry",
+      "eggplant", "leek", "radish", "beet", "scallion", "herb", "thyme", "rosemary",
+      "sage", "chive", "fennel", "bok", "choy", "sprout"}, "Fresh Fruits & Veggies", None),
+]
+
+
+# Cut names that take their meat from the word before them ("chicken
+# thigh", "salmon fillet") - unlike "chicken broth", which isn't meat.
+MEAT_CUTS = {
+    "thigh", "breast", "leg", "tender", "tenderloin", "cutlet", "rib", "roast", "loin",
+    "fillet", "filet", "patty", "burger", "shank", "shoulder", "belly", "mince", "steak",
+}
+
+
+def guess_category(words: list[str], frozen: bool = False) -> tuple[str | None, str | None]:
+    """(category, subcategory) from an item's normalized words, for things
+    with no TJ's match. Only the head noun (last word) counts - "garlic
+    powder" is a powder, not garlic - except for meat cuts, where the word
+    before says which meat."""
+    if frozen:
+        return "From The Freezer", None
+    if not words:
+        return None, None
+    head = words[-1]
+    meat = words[-2] if head in MEAT_CUTS and len(words) >= 2 else None
+    for keywords, category, subcategory in KEYWORD_CATEGORIES:
+        if head in keywords or (meat and meat in keywords and category.startswith("Meat")):
+            return category, subcategory
+    return None, None
+
+
 def shelf_life_for(category: str | None, subcategory: str | None) -> dict:
     """{"location", "days", "freezer_days"} for a TJ's category pair."""
     for rule_category, rule_subcategory, rule in SHELF_LIFE_RULES:

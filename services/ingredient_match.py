@@ -33,14 +33,15 @@ PREP_WORDS = {
     "chopped", "diced", "minced", "sliced", "thinly", "thickly", "finely", "roughly",
     "coarsely", "grated", "shredded", "crushed", "peeled", "seeded", "cored",
     "trimmed", "halved", "quartered", "cubed", "julienned", "torn", "packed",
-    "softened", "melted", "cold", "warm", "hot", "room", "temperature", "divided",
-    "optional", "taste", "needed", "plus", "more", "boneless", "skinless", "bone-in",
-    "skin-on", "organic", "trader", "joe's", "joes", "tj's", "tjs", "uncooked",
+    "softened", "melted", "cold", "warm", "room", "temperature", "divided",
+    "optional", "taste", "needed", "plus", "more", "boneless", "skinless", "bone",
+    "skin", "on", "organic", "trader", "joe's", "joes", "tj's", "tjs", "uncooked",
     "cooked", "raw", "frozen", "thawed", "drained", "rinsed", "lightly", "beaten",
-    "whole", "ripe", "good", "quality", "best", "favorite", "store-bought",
+    "whole", "ripe", "good", "quality", "best", "favorite", "store", "bought",
     "homemade", "prepared", "approximately", "heaping", "level", "generous",
     "few", "several", "each", "per", "serving", "servings", "garnish", "garnishing",
-    "last", "rest", "leftover", "leftovers",
+    "last", "rest", "leftover", "leftovers", "other", "such", "as", "like",
+    "brimming", "full", "if", "you", "deveined", "shelled", "dried",
 }
 
 # Different words for the same pantry product, normalized to one spelling.
@@ -58,6 +59,9 @@ SYNONYMS = {
     "hamburger": "ground beef",
     "minced beef": "ground beef",
 }
+
+# Cheeses whose name only makes sense with "cheese" on the end.
+CHEESES_NAMED_CHEESE = {"cream cheese", "cottage cheese", "goat cheese", "blue cheese", "string cheese", "swiss cheese"}
 
 _UNICODE_FRACTIONS = {"½": 0.5, "⅓": 1 / 3, "⅔": 2 / 3, "¼": 0.25, "¾": 0.75, "⅛": 0.125}
 _NUMBER_WORDS = {
@@ -91,9 +95,32 @@ def _singularize(word: str) -> str:
     return word
 
 
+def alternatives(text: str) -> list[str]:
+    """Split "relish or pickles" / "red or green leaf lettuce" into the
+    options a recipe allows, so either one counts as a match. A line with no
+    "or" is its own single option."""
+    text = re.sub(r"\([^)]*\)", " ", text)
+    options = [option for option in re.split(r"\s+or\s+", text, flags=re.IGNORECASE) if option.strip()]
+    return options or [text]
+
+
 def normalize_item(text: str) -> str:
     """Reduce an ingredient line or item name to its essential words, e.g.
-    "2 lbs boneless, skinless chicken thighs (about 6)" -> "chicken thigh"."""
+    "2 lbs boneless, skinless chicken thighs (about 6)" -> "chicken thigh".
+    For "X or Y" lines it's the most specific option ("red or green leaf
+    lettuce" -> "green leaf lettuce"); matching tries every option."""
+    options = [normalized for normalized in map(_normalize_option, alternatives(text)) if normalized]
+    if not options:
+        return ""
+    return max(options, key=lambda option: len(option.split()))
+
+
+def option_words(text: str) -> list[list[str]]:
+    """Each "or" option's normalized words - what matching compares."""
+    return [words for words in (_normalize_option(option).split() for option in alternatives(text)) if words]
+
+
+def _normalize_option(text: str) -> str:
     text = re.sub(r"\([^)]*\)", " ", text.lower())  # parentheticals: "(about 6)"
     # Commas usually start trailing prep ("onion, diced"), but sometimes
     # separate leading adjectives ("boneless, skinless chicken") - so use the
@@ -107,16 +134,24 @@ def normalize_item(text: str) -> str:
 
 def _normalize_segment(text: str) -> str:
     text = text.replace("&", " and ")
+    text = re.sub(r"(?<=[a-z])/|/(?=[a-z])", " ", text)  # "a2/a2", "and/or"
+    text = re.sub(r"(?<=[a-z])-(?=[a-z])", " ", text)  # "extra-virgin", "bone-in"
     text = re.sub(r"[^a-z0-9'\-\s/½⅓⅔¼¾⅛]", " ", text)
 
     words = []
     for raw_word in text.split():
         word = raw_word.strip("'-")
-        if not word or re.fullmatch(r"[\d/.½⅓⅔¼¾⅛\-]+", word):
+        # Amounts and codes ("2", "85/15", "a2") never name the item.
+        if not word or re.search(r"[\d½⅓⅔¼¾⅛]", word):
             continue
         if word in UNITS or word in PREP_WORDS:
             continue
         words.append(_singularize(word))
+
+    # "mozzarella cheese" and "mozzarella" are the same pantry item - but
+    # "cream cheese" is not "cream".
+    if len(words) >= 2 and words[-1] == "cheese" and " ".join(words[-2:]) not in CHEESES_NAMED_CHEESE:
+        words.pop()
 
     phrase = " ".join(words)
     for original, replacement in SYNONYMS.items():
@@ -167,17 +202,22 @@ def match_score(query_text: str, candidate_text: str) -> float:
     candidate's description is present in the query, scaled by how much of
     the query the candidate explains - so for "chicken thigh", the product
     "Chicken thighs" scores 1.0, "Thighs" scores lower, and "Chicken breast"
-    scores 0."""
-    query = item_words(query_text)
+    scores 0. For "X or Y" query text, the best option counts."""
     candidate = item_words(candidate_text)
-    if not query or not candidate or query[-1] != candidate[-1]:
+    if not candidate:
         return 0.0
+    candidate_set = set(candidate)
 
-    query_set, candidate_set = set(query), set(candidate)
-    shared = len(query_set & candidate_set)
-    candidate_coverage = shared / len(candidate_set)
-    query_coverage = shared / len(query_set)
-    return round(candidate_coverage * (0.5 + 0.5 * query_coverage), 4)
+    best = 0.0
+    for query in option_words(query_text):
+        if query[-1] != candidate[-1]:
+            continue
+        query_set = set(query)
+        shared = len(query_set & candidate_set)
+        candidate_coverage = shared / len(candidate_set)
+        query_coverage = shared / len(query_set)
+        best = max(best, candidate_coverage * (0.5 + 0.5 * query_coverage))
+    return round(best, 4)
 
 
 @dataclass
@@ -221,29 +261,103 @@ def best_product_match(
     return ranked[0] if ranked else None
 
 
+# Extra words in a TJ's title that still describe the plain, everyday
+# version of a thing ("Organic Pasture Raised Large Brown Eggs" is just
+# eggs). Any other extra word - "Marshmallow", "Egg Nog", "Fig" - means a
+# flavored or different product, and costs a lot more.
+PLAIN_DESCRIPTORS = {
+    "pasture", "raised", "cage", "free", "range", "brown", "white", "plain", "natural",
+    "unsalted", "salted", "lightly", "baby", "petite", "mini", "jumbo", "premium", "imported",
+    "virgin", "pure", "classic", "original", "traditional", "creamy", "crunchy", "smooth",
+    "grated", "sliced", "unsweetened", "lowfat", "nonfat", "reduced", "fat", "lactose",
+    "low", "sodium", "bag", "bunch", "pack", "family", "size", "value", "grade",
+    "american", "italian", "california", "hass", "gold", "yellow", "red", "cut",
+    "wild", "farm", "uncured", "lean", "strained", "thick", "greek", "style", "all",
+    "liter", "pint", "cold", "pressed", "dozen", "loose", "seedless", "no", "pulp",
+    "black", "sharp", "mild", "aged",
+}
+
+# Aisles where the everyday version of a staple lives, vs. aisles where a
+# name match is usually a snack, dessert, drink, or ready meal.
+STAPLE_CATEGORIES = {
+    "Fresh Fruits & Veggies", "Dairy & Eggs", "Meat, Seafood & Plant-based", "Cheese",
+    "Bakery", "For the Pantry", "Dips, Sauces & Dressings", "Juices & More", "Coffee & Tea",
+}
+# Penalty for aisles where a name match is usually something else: a
+# snack or drink (strong), or a ready meal (mild - "dumplings" really are
+# in the freezer aisle).
+CATEGORY_PENALTIES = {
+    "Snacks & Sweets": 0.3,
+    "Wine, Beer & Liquor": 0.3,
+    "Sodas & Mixers": 0.3,
+    "Fresh Prepared Foods": 0.1,
+    "From The Freezer": 0.1,
+}
+
+# Below this, a "match" is a guess too wild to show a photo/price for, and
+# the item is created from keywords alone (config/shelf_life.py).
+MIN_TJ_SCORE = 0.6
+
+
+def _tj_title_words(name: str) -> list[str]:
+    """TJ's often puts descriptors last ("Peanut Butter Creamy Unsalted",
+    "Greek Lowfat Yogurt Plain") - drop those so the real noun is the head."""
+    words = item_words(name)
+    while len(words) > 1 and words[-1] in PLAIN_DESCRIPTORS:
+        words.pop()
+    return words
+
+
+def _names_its_aisle(head: str, subcategory: str | None) -> bool:
+    """True when the item's aisle is named exactly after the thing: "Eggs",
+    "Butter", "Milk & Cream" - but not "Nut Butters & Fruit Spreads"."""
+    for segment in re.split(r"[&,]", subcategory or ""):
+        if normalize_item(segment) == head:
+            return True
+    return False
+
+
+def tj_match_score(query: list[str], item: dict, wants_frozen: bool = False) -> float:
+    """0 if the TJ's item can't be the query (head noun differs or a query
+    word is missing); otherwise higher for plainer titles in the aisle
+    where the everyday version of that item lives."""
+    title_words = _tj_title_words(item["name"])
+    if not query or not title_words or title_words[-1] != query[-1]:
+        return 0.0
+    query_set, title_set = set(query), set(title_words)
+    if not query_set <= title_set:
+        return 0.0
+
+    extras = title_set - query_set
+    flavor_words = [word for word in extras if word not in PLAIN_DESCRIPTORS]
+    score = 1.0 - 0.25 * len(flavor_words) - 0.03 * (len(extras) - len(flavor_words))
+
+    category = item.get("category")
+    if category in STAPLE_CATEGORIES:
+        score += 0.1
+    elif category in CATEGORY_PENALTIES and not (wants_frozen and category == "From The Freezer"):
+        score -= CATEGORY_PENALTIES[category]
+    if _names_its_aisle(query[-1], item.get("subcategory")):
+        score += 0.2
+    return round(score, 4)
+
+
 def best_tj_match(text: str, catalog: list[dict]) -> Match | None:
     """Pick the Trader Joe's item that best fits a generic name, e.g.
-    "chicken thighs" -> "Organic Boneless Skinless Chicken Thighs".
-
-    Unlike pantry products, TJ's titles are long and descriptive, so this
-    rewards the TJ's item containing all of the query's words, and only
-    lightly prefers shorter titles."""
-    query = item_words(text)
-    if not query:
+    "eggs" -> "Organic Pasture Raised Large Brown Eggs", not "Marshmallow
+    Eggs". None if nothing is a believable match."""
+    queries = option_words(text)
+    if not queries:
         return None
 
-    query_set = set(query)
+    # "frozen" is dropped by normalization (frozen peas are still peas), but
+    # it does say which aisle to look in.
+    wants_frozen = bool(re.search(r"\bfrozen\b", text.lower()))
     best: Match | None = None
     for item in catalog:
-        title_words = item_words(item["name"])
-        if not title_words or title_words[-1] != query[-1]:
+        score = max(tj_match_score(query, item, wants_frozen) for query in queries)
+        if score < MIN_TJ_SCORE:
             continue
-        title_set = set(title_words)
-        query_coverage = len(query_set & title_set) / len(query_set)
-        if query_coverage < 1:
-            continue
-        # 1.0 for an exact title; longer, more specific titles fade gently.
-        score = round(0.6 + 0.4 * len(query_set) / len(title_set), 4)
         if best is None or score > best.score or (
             score == best.score and len(item["name"]) < len(best.item["name"])
         ):

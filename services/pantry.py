@@ -10,9 +10,10 @@ Grocy only ever holds things this household actually buys.
 """
 
 import logging
+import re
 from dataclasses import dataclass, field
 
-from config.shelf_life import FREEZER, FRIDGE, NEVER_EXPIRES, PANTRY, shelf_life_for
+from config.shelf_life import FREEZER, FRIDGE, NEVER_EXPIRES, PANTRY, guess_category, shelf_life_for
 from services.database import (
     get_pantry_aliases,
     get_pantry_products,
@@ -28,6 +29,7 @@ from services.ingredient_match import (
     best_product_match,
     best_tj_match,
     display_name,
+    item_words,
     normalize_item,
     parse_quantity,
     rank_matches,
@@ -150,7 +152,13 @@ async def create_product(
     filled in from its TJ's match: photo, product group, home location, and
     default shelf life. Adds it to `state` and learns the alias."""
     setup = await ensure_setup(grocy)
-    rule = shelf_life_for(tj_item.get("category") if tj_item else None, tj_item.get("subcategory") if tj_item else None)
+    if tj_item:
+        category, subcategory = tj_item.get("category"), tj_item.get("subcategory")
+    else:
+        # No believable TJ's match (their online catalog skips a lot of
+        # basic produce) - still get the aisle right from keywords.
+        category, subcategory = guess_category(item_words(text), frozen=bool(re.search(r"\bfrozen\b", text.lower())))
+    rule = shelf_life_for(category, subcategory)
     name = display_name(text)
 
     data = {
@@ -165,7 +173,7 @@ async def create_product(
         "default_best_before_days_after_thawing": 1 if rule["days"] != NEVER_EXPIRES else 0,
         "min_stock_amount": 0,
     }
-    group_id = await _group_id(grocy, setup, tj_item.get("category") if tj_item else None)
+    group_id = await _group_id(grocy, setup, category)
     if group_id is not None:
         data["product_group_id"] = group_id
 
