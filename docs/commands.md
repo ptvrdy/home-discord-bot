@@ -68,6 +68,27 @@ from `#general` or anywhere else.
 | `/plan_meal <meal> <recipe>` | Add a recipe to this week's Breakfast/Lunch/Dinner list — deliberately *not* tied to a specific day, since dinner plans shift (takeout, forgot to defrost, ran out of an ingredient). Autocomplete suggests your saved recipes, but you can type anything. Shows up in the "🍽️ This Week's Food" section of #this-week, and auto-clears every Monday. |
 | `/clear_meal_plan` | Clear this week's food list and start over. |
 
+## 🥫 Pantry
+
+Needs Grocy — see [`docs/grocy-setup.md`](grocy-setup.md). Pantry items are generic names
+("Chicken thigh", "Egg") filled in from the Trader Joe's catalog: photo, price, category,
+and how long they keep.
+
+| Command | What it does |
+|---|---|
+| `/put_away [list_name]` | Shows everything crossed off in OurGroceries since the last put-away, pre-checked. Uncheck anything you didn't actually buy, then **Put Away** adds one of each to the pantry at TJ's price — creating new pantry items from the TJ's catalog as needed. Undo button included. Rosie also offers this in #nudges at 7pm whenever new items have been crossed off. |
+| `/pantry <update>` | Update the pantry in plain English: *used 4 eggs*, *finished the milk*, *bought bananas and 2 avocados*, *the spinach went bad*, *froze the chicken*, *used some butter* (marks it opened). Typing the same thing in the #pantry channel works too. When something runs out you get a one-tap "add to the list" button; ambiguous items get "did you mean?" buttons, and Rosie remembers your answer. |
+| `/what_can_i_make [tag]` | Ranks your recipes by how much of each is already in stock (pantry staples like salt and oil are assumed), with a boost for recipes that use something about to expire. |
+| `/in_stock` | What's in the pantry right now, plus anything to use soon. |
+| `/pantry_fix <product> <tj_item>` | Point a pantry item at a different Trader Joe's product when the automatic match was wrong (updates its photo and price). |
+| `/sync_tj_catalog` | Refresh Rosie's copy of the Trader Joe's catalog now. Runs automatically on the 1st of each month and posts a summary (with "back at TJ's" for seasonal items you've bought before) in #nudges. |
+
+Also automatic: `/review` → Made offers to use up the recipe's in-stock ingredients;
+`/shopping_list`, `/combine_recipes`, and `/meal_plan` start in-stock ingredients unchecked
+"(in pantry)"; #this-week gets a "⏰ Use Soon" section; #nudges gets a 9am "use it or freeze
+it" reminder for meat (and produce, if enabled in `config/shelf_life.py`) and a Monday check
+of FDA recalls against what's in stock.
+
 ## 📅 Schedule
 
 | Command | What it does |

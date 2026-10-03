@@ -7,6 +7,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from commands.pantry_commands import in_pantry_locations, offer_recipe_consumption
 from config.discord_tags import DISCORD_TAGS
 from models.recipe_card import Recipe as RecipeData
 from services.database import (
@@ -204,6 +205,11 @@ class RecipeReviewModal(discord.ui.Modal):
 
             await self._sync_journal_message()
             await interaction.followup.send("✅ Review saved!", ephemeral=True)
+
+            if activity == "Made":
+                recipe = get_recipe_by_thread(self.thread.id)
+                if recipe:
+                    await offer_recipe_consumption(interaction, recipe["ingredients"])
         except (ValueError, discord.HTTPException) as error:
             await interaction.followup.send(
                 f"❌ I couldn't update this recipe journal: {error}",
@@ -712,6 +718,10 @@ class GroceryListSelect(discord.ui.Select):
             )
             return
 
+        # Already in the pantry (Grocy) - start those unchecked too.
+        for ingredient, location in (await in_pantry_locations(self.ingredients)).items():
+            locations.setdefault(ingredient, location)
+
         content = f"Tap to uncheck anything you already have, then **Add Selected** for **{list_name}**:"
         if len(self.ingredients) > 24:
             content += f"\n_(showing the first 24 of {len(self.ingredients)} ingredients)_"
@@ -741,7 +751,7 @@ class IngredientToggleButton(discord.ui.Button):
     def _label(self) -> str:
         base = f"{'✅' if self.checked else '⬜'} {self.ingredient}"
         if self.location:
-            base += f" (on {self.location})"
+            base += f" ({self.location})" if self.location.startswith("in ") else f" (on {self.location})"
         return base[:80]
 
     def _style(self) -> discord.ButtonStyle:

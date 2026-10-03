@@ -396,5 +396,17 @@ class BuildThisWeekEmbedTests(unittest.TestCase):
         self.assertNotIn("Trash reminder call", waste_part)
 
 
+class UseSoonFieldTests(unittest.TestCase):
+    def test_use_soon_field_follows_the_food_section(self):
+        embed = build_this_week_embed(MONDAY, [], [], NOW, use_soon="🟠 Chicken thigh — tomorrow")
+        names = [field.name for field in embed.fields]
+        self.assertEqual(names[names.index("🍽️ This Week's Food") + 1], "⏰ Use Soon")
+        self.assertEqual(embed.fields[names.index("⏰ Use Soon")].value, "🟠 Chicken thigh — tomorrow")
+
+    def test_no_use_soon_field_when_nothing_expiring(self):
+        embed = build_this_week_embed(MONDAY, [], [], NOW)
+        self.assertNotIn("⏰ Use Soon", [field.name for field in embed.fields])
+
+
 if __name__ == "__main__":
     unittest.main()

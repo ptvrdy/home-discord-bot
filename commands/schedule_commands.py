@@ -43,6 +43,9 @@ from services.schedule import (
     parse_task_request,
     resolve_day,
 )
+from services.grocy import Grocy, GrocyError, grocy_configured
+from services.pantry import expiring_items
+from services.pantry_embed import expiring_field_value
 from services.this_week_embed import build_this_week_embed
 
 
@@ -106,6 +109,15 @@ async def refresh_this_week(bot: commands.Bot) -> None:
 
     meal_plan_items = get_meal_plan_items(monday)
 
+    use_soon = None
+    if grocy_configured():
+        try:
+            async with Grocy() as grocy:
+                volatile = await grocy.get_volatile_stock(due_soon_days=3)
+            use_soon = expiring_field_value(expiring_items(volatile), now.date())
+        except GrocyError:
+            pass  # the pantry being down shouldn't break #this-week
+
     embed = build_this_week_embed(
         monday,
         events,
@@ -116,6 +128,7 @@ async def refresh_this_week(bot: commands.Bot) -> None:
         partner_name=partner_name,
         chore_fairness=chore_fairness,
         meal_plan_items=meal_plan_items,
+        use_soon=use_soon,
     )
 
     message_id = get_state(THIS_WEEK_MESSAGE_STATE_KEY)

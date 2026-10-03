@@ -232,6 +232,56 @@ async def add_recipe_ingredients(
     return {"added": added, "skipped": skipped, "added_item_ids": added_item_ids}
 
 
+async def get_list_items_with_status(
+    list_ids: list[str] | None = None,
+    client: OurGroceries | None = None,
+) -> list[dict]:
+    """Every item on the given lists (all lists if None), crossed off or not,
+    for the pantry put-away flow:
+    [{"list_id", "list_name", "item_id", "text", "crossed_off", "crossed_off_at"}].
+
+    crossed_off_at is whatever crossed-off marker the server gave (a
+    timestamp when present), as a string - used with item_id to tell this
+    week's cross-off apart from last week's if OurGroceries reuses the ID.
+
+    One get_my_lists call plus one get_list_items per list - only ever run
+    on a click, or once a day for the evening "looks like you shopped" check."""
+    client = client or _client()
+    await client.login()
+
+    lists_response = await client.get_my_lists()
+    items = []
+    for shopping_list in lists_response["shoppingLists"]:
+        if list_ids is not None and shopping_list["id"] not in list_ids:
+            continue
+        list_response = await client.get_list_items(shopping_list["id"])
+        for item in list_response.get("list", {}).get("items", []):
+            text = _item_text(item)
+            if not text or item.get("id") is None:
+                continue
+            crossed_off = _is_crossed_off(item)
+            items.append(
+                {
+                    "list_id": shopping_list["id"],
+                    "list_name": shopping_list["name"],
+                    "item_id": str(item["id"]),
+                    "text": text,
+                    "crossed_off": crossed_off,
+                    "crossed_off_at": str(item.get("crossedOffAt") or item.get("crossedOff") or "") if crossed_off else "",
+                }
+            )
+    return items
+
+
+async def add_items(list_id: str, items: list[str], client: OurGroceries | None = None) -> None:
+    """Add plain items (no recipe note) to a list - used by the pantry's
+    "add to shopping list" button after something runs out."""
+    client = client or _client()
+    await client.login()
+    for item in items:
+        await client.add_item_to_list(list_id, item, auto_category=True)
+
+
 async def remove_items(
     list_id: str,
     item_ids: list[str],

@@ -3,10 +3,12 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
-from services.database import initialize_database
+# Load .env before importing anything that reads it at import time
+# (services.database picks its file from ROSIE_DATABASE_PATH). Set
+# ROSIE_ENV_FILE=.env.dev to run a separate dev bot alongside the real one.
+load_dotenv(os.getenv("ROSIE_ENV_FILE", ".env"))
 
-
-load_dotenv()
+from services.database import initialize_database  # noqa: E402
 
 TOKEN = os.environ["DISCORD_TOKEN"]
 
@@ -22,6 +24,7 @@ class HouseBot(commands.Bot):
         await self.load_extension("commands.wishlist_commands")
         await self.load_extension("commands.meal_plan_commands")
         await self.load_extension("commands.backup_commands")
+        await self.load_extension("commands.pantry_commands")
         await self.tree.sync()
 
 bot = HouseBot(

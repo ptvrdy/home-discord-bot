@@ -116,6 +116,7 @@ def build_this_week_embed(
     partner_name: str | None = None,
     chore_fairness: dict[str, str] | None = None,
     meal_plan_items: list[dict] | None = None,
+    use_soon: str | None = None,
 ) -> discord.Embed:
     sunday = monday + timedelta(days=6)
     embed = discord.Embed(
@@ -173,6 +174,11 @@ def build_this_week_embed(
         value=_truncate(_meal_plan_field_value(meal_plan_items or []), FOOD_FIELD_LIMIT),
         inline=False,
     )
+
+    # Pre-formatted by services/pantry_embed.py - only meat (and produce, if
+    # enabled) has a shelf life in the pantry, so this stays short.
+    if use_soon:
+        embed.add_field(name="⏰ Use Soon", value=_truncate(use_soon, FOOD_FIELD_LIMIT), inline=False)
 
     chore_fairness = chore_fairness or {}
     overdue_chores = [chore for chore in chores if is_overdue(chore, now)]

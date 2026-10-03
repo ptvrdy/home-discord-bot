@@ -355,6 +355,25 @@ OURGROCERIES_PASSWORD=your-ourgroceries-password
 
 ## Project layout
 
+## Pantry (Grocy + Trader Joe's)
+
+Optional pantry inventory, backed by a self-hosted [Grocy](https://grocy.info) that you
+almost never have to open, with Rosie as the interface.
+
+- **Getting things into the pantry:** items crossed off in OurGroceries become stock
+  after a quick "did you actually buy these?" check (`/put_away`, also offered at 7pm).
+  - **No product setup:** new pantry items are created from Rosie's copy of the Trader
+    Joe's catalog, re-synced monthly, with photo, price, category and shelf life filled in.
+- **Day-to-day updates:** plain-English messages in `#pantry` ("used 4 eggs, finished
+  the milk") keep stock current, with no AI or token cost.
+- **Recipes:** `/what_can_i_make` ranks recipes by what's in stock. `/review` → Made
+  offers to use up the ingredients, and `/shopping_list` skips what you already have.
+- **Alerts:** "Use soon" for meat on `#this-week` and in `#nudges`, plus a weekly FDA
+  recall check against what's in stock.
+
+Setup, configuration and moving servers: [`docs/grocy-setup.md`](docs/grocy-setup.md).
+Commands: [`docs/commands.md`](docs/commands.md#-pantry).
+
 ```
 bot.py                     Entry point: loads the cogs, syncs slash commands, initializes the DB
 
@@ -365,6 +384,8 @@ commands/
                             the /task and /week scheduling flows
 
 models/
+    pantry_commands.py     Pantry: /put_away, #pantry messages, /what_can_i_make, catalog
+                            sync, use-soon nudges, recall checks
     recipe_card.py         Recipe dataclass — the shape every recipe takes regardless of source
 
 services/
@@ -386,12 +407,20 @@ services/
     database.py              SQLite schema, migrations, and all persistence
 
 config/
+    grocy.py                 Grocy REST API client
+    tj_catalog.py            Trader Joe's catalog fetch/parse
+    ingredient_match.py      Pure text -> pantry product / TJ's item matching
+    pantry_parser.py         Pure plain-English pantry message parsing
+    pantry.py                Pantry operations (Grocy + catalog + matching)
+    pantry_embed.py          Pure recipe scoring and pantry message formatting
+    recalls.py               openFDA recall lookups + matching against stock
     discord_tags.py          Maps logical tag keys to Discord forum tag names/emoji
     recipe_keywords.py       Include/exclude keyword rules per tag
     chores.py                Default chores and their nudge thresholds
     waste_schedule.py        Weekly trash/recycling/compost pickup days
 
 tests/                       Unit tests (unittest) for the services above
+    shelf_life.py            Pantry storage location + shelf life per TJ's category
 ```
 
 ## Setup

@@ -1,6 +1,7 @@
 """SQLite persistence for Rosie's Recipe Box."""
 
 import json
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import date, datetime
@@ -12,7 +13,12 @@ from models.recipe_card import Recipe
 from services.recipe_tags import matches_keyword
 
 
-DATABASE_PATH = Path(__file__).resolve().parents[1] / "data" / "rosies_recipe_box.db"
+# ROSIE_DATABASE_PATH lets a local dev bot use its own database file instead
+# of the real one. Read at import time, so bot.py loads .env before importing.
+DATABASE_PATH = Path(
+    os.getenv("ROSIE_DATABASE_PATH")
+    or Path(__file__).resolve().parents[1] / "data" / "rosies_recipe_box.db"
+)
 
 
 def _connect(database_path: Path = DATABASE_PATH) -> sqlite3.Connection:
@@ -142,6 +148,42 @@ def initialize_database(database_path: Path = DATABASE_PATH) -> None:
                 recipe_title TEXT NOT NULL,
                 added_by TEXT NOT NULL,
                 added_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS tj_products (
+                sku TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                category TEXT,
+                subcategory TEXT,
+                price REAL,
+                size TEXT,
+                image_url TEXT,
+                is_new INTEGER NOT NULL DEFAULT 0,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                discontinued_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS pantry_products (
+                grocy_product_id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                tj_sku TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS pantry_aliases (
+                alias TEXT PRIMARY KEY,
+                grocy_product_id INTEGER NOT NULL,
+                created_by TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS og_imported_items (
+                og_item_id TEXT NOT NULL,
+                crossed_off_at TEXT NOT NULL,
+                list_id TEXT NOT NULL,
+                imported_at TEXT NOT NULL,
+                PRIMARY KEY (og_item_id, crossed_off_at)
             );
             """
         )
@@ -1089,3 +1131,261 @@ def get_completed_tasks_between(
             (start.isoformat(), end.isoformat()),
         ).fetchall()
         return [dict(row) for row in rows]
+
+
+# --- Pantry (Grocy) + Trader Joe's catalog ---
+
+
+def upsert_tj_products(
+    rows: list[dict],
+    seen_at: datetime,
+    database_path: Path = DATABASE_PATH,
+) -> dict:
+    """Store a full catalog sync. Every row is inserted or refreshed; anything
+    not in this sync is marked discontinued (not deleted - seasonal items come
+    back). Returns {"added", "price_changed", "discontinued", "returned_skus"},
+    where returned_skus are items that had been discontinued and reappeared."""
+    initialize_database(database_path)
+    seen = seen_at.isoformat()
+    added = 0
+    price_changed = 0
+    returned_skus: list[str] = []
+
+    with _database_connection(database_path) as connection:
+        existing = {
+            row[0]: (row[1], row[2])
+            for row in connection.execute("SELECT sku, price, discontinued_at FROM tj_products")
+        }
+        for row in rows:
+            previous = existing.get(row["sku"])
+            if previous is None:
+                added += 1
+            else:
+                previous_price, discontinued_at = previous
+                if previous_price is not None and row["price"] is not None and previous_price != row["price"]:
+                    price_changed += 1
+                if discontinued_at:
+                    returned_skus.append(row["sku"])
+
+            connection.execute(
+                """
+                INSERT INTO tj_products (
+                    sku, name, category, subcategory, price, size, image_url,
+                    is_new, first_seen, last_seen, discontinued_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                ON CONFLICT(sku) DO UPDATE SET
+                    name = excluded.name,
+                    category = excluded.category,
+                    subcategory = excluded.subcategory,
+                    price = excluded.price,
+                    size = excluded.size,
+                    image_url = excluded.image_url,
+                    is_new = excluded.is_new,
+                    last_seen = excluded.last_seen,
+                    discontinued_at = NULL
+                """,
+                (
+                    row["sku"], row["name"], row.get("category"), row.get("subcategory"),
+                    row.get("price"), row.get("size"), row.get("image_url"),
+                    1 if row.get("is_new") else 0, seen, seen,
+                ),
+            )
+
+        cursor = connection.execute(
+            "UPDATE tj_products SET discontinued_at = ? WHERE last_seen < ? AND discontinued_at IS NULL",
+            (seen, seen),
+        )
+        discontinued = cursor.rowcount
+
+    return {
+        "added": added,
+        "price_changed": price_changed,
+        "discontinued": discontinued,
+        "returned_skus": returned_skus,
+    }
+
+
+def get_tj_catalog(database_path: Path = DATABASE_PATH) -> list[dict]:
+    """Every currently-available catalog item, for matching."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            "SELECT * FROM tj_products WHERE discontinued_at IS NULL ORDER BY name"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_tj_product(sku: str, database_path: Path = DATABASE_PATH) -> dict | None:
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        row = connection.execute("SELECT * FROM tj_products WHERE sku = ?", (sku,)).fetchone()
+        return dict(row) if row else None
+
+
+def search_tj_products(query: str, limit: int = 25, database_path: Path = DATABASE_PATH) -> list[dict]:
+    """Catalog items whose name contains every word of the query, for
+    autocomplete when fixing a product's TJ's match."""
+    initialize_database(database_path)
+    words = [word for word in query.lower().split() if word]
+    sql = "SELECT sku, name, price FROM tj_products WHERE discontinued_at IS NULL"
+    params: list = []
+    for word in words:
+        sql += " AND lower(name) LIKE ?"
+        params.append(f"%{word}%")
+    sql += " ORDER BY length(name) LIMIT ?"
+    params.append(limit)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        return [dict(row) for row in connection.execute(sql, params).fetchall()]
+
+
+def get_new_tj_products(limit: int = 10, database_path: Path = DATABASE_PATH) -> list[dict]:
+    """Items TJ's currently flags as new, newest-seen first."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT * FROM tj_products
+            WHERE is_new = 1 AND discontinued_at IS NULL
+            ORDER BY first_seen DESC, name
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def record_pantry_product(
+    grocy_product_id: int,
+    name: str,
+    tj_sku: str | None,
+    database_path: Path = DATABASE_PATH,
+) -> None:
+    """Remember which TJ's item a Grocy product came from (for price/photo
+    refreshes, "back at TJ's" alerts, and recall matching)."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO pantry_products (grocy_product_id, name, tj_sku) VALUES (?, ?, ?)
+            ON CONFLICT(grocy_product_id) DO UPDATE SET name = excluded.name, tj_sku = excluded.tj_sku
+            """,
+            (grocy_product_id, name, tj_sku),
+        )
+
+
+def get_pantry_products(database_path: Path = DATABASE_PATH) -> list[dict]:
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT p.grocy_product_id, p.name, p.tj_sku, t.name AS tj_name, t.price AS tj_price,
+                   t.image_url AS tj_image_url
+            FROM pantry_products p
+            LEFT JOIN tj_products t ON t.sku = p.tj_sku
+            ORDER BY p.name
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_pantry_aliases(database_path: Path = DATABASE_PATH) -> dict[str, int]:
+    """{normalized text: grocy product id} for every confirmed match."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        return {row[0]: row[1] for row in connection.execute("SELECT alias, grocy_product_id FROM pantry_aliases")}
+
+
+def set_pantry_alias(
+    alias: str,
+    grocy_product_id: int,
+    created_by: str | None = None,
+    database_path: Path = DATABASE_PATH,
+) -> None:
+    """Teach Rosie that this (already-normalized) text means this product.
+    A later confirmation for the same text replaces the earlier one."""
+    if not alias:
+        return
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO pantry_aliases (alias, grocy_product_id, created_by) VALUES (?, ?, ?)
+            ON CONFLICT(alias) DO UPDATE SET
+                grocy_product_id = excluded.grocy_product_id,
+                created_by = excluded.created_by
+            """,
+            (alias, grocy_product_id, created_by),
+        )
+
+
+def get_imported_og_keys(database_path: Path = DATABASE_PATH) -> set[tuple[str, str]]:
+    """(og_item_id, crossed_off_at) pairs already put away into the pantry."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        return {(row[0], row[1]) for row in connection.execute("SELECT og_item_id, crossed_off_at FROM og_imported_items")}
+
+
+def record_og_imported(
+    items: list[tuple[str, str]],
+    list_id: str,
+    imported_at: datetime,
+    database_path: Path = DATABASE_PATH,
+) -> None:
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.executemany(
+            """
+            INSERT OR IGNORE INTO og_imported_items (og_item_id, crossed_off_at, list_id, imported_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            [(item_id, crossed_off_at, list_id, imported_at.isoformat()) for item_id, crossed_off_at in items],
+        )
+
+
+def forget_og_imported(og_item_ids: list[str], database_path: Path = DATABASE_PATH) -> None:
+    """Drop put-away records for items that are back on the list (un-crossed),
+    so the next time they're crossed off they're offered again - needed
+    because OurGroceries may reuse an item's ID instead of creating a new one."""
+    if not og_item_ids:
+        return
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.executemany(
+            "DELETE FROM og_imported_items WHERE og_item_id = ?",
+            [(item_id,) for item_id in og_item_ids],
+        )
+
+
+def get_all_recipes(tag: str | None = None, database_path: Path = DATABASE_PATH) -> list[dict]:
+    """Every recipe's title, thread ID, and ingredients (optionally only one
+    tag's), for scoring against what's in the pantry."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        if tag:
+            rows = connection.execute(
+                """
+                SELECT r.title, r.discord_thread_id, r.ingredients_json
+                FROM recipes r
+                JOIN recipe_tags rt ON rt.recipe_id = r.id
+                WHERE rt.tag = ?
+                ORDER BY r.title
+                """,
+                (tag,),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                "SELECT title, discord_thread_id, ingredients_json FROM recipes ORDER BY title"
+            ).fetchall()
+
+        results = []
+        for row in rows:
+            data = dict(row)
+            data["ingredients"] = json.loads(data.pop("ingredients_json"))
+            results.append(data)
+        return results
