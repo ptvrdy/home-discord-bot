@@ -65,6 +65,14 @@ takes about 30 seconds). After that it re-syncs on the 1st of each month.
 | Nothing | Meat that's about to expire shows on #this-week and gets a 9am "use it or freeze it" nudge with 🧊 Froze it / ✅ Used it buttons. |
 | Nothing | Every Monday, checks FDA recalls mentioning Trader Joe's against what's in stock. |
 
+**Barcodes:** when Rosie creates a pantry item from a Trader Joe's-brand product, she also
+registers that product's barcode in Grocy.
+- **How it works:** TJ's own-brand barcodes are `00` + the item number's last 5 digits +
+  a check digit. Every case in the FDA recall records confirmed this.
+- **Scanning:** the camera scanner on Grocy's mobile page (Purchase / Consume) recognizes
+  the package. Barcode Buddy works too if you add it later.
+- **Name-brand items** sold at TJ's carry their own barcodes, so they aren't registered.
+
 **Shelf lives** live in [`config/shelf_life.py`](../config/shelf_life.py):
 - **Meat and seafood** keep 2–3 days in the fridge and about 4 months frozen.
 - **Produce** has a 5-day default but is **off** until `TRACK_PRODUCE = True`.

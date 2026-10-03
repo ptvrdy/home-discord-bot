@@ -35,7 +35,7 @@ from services.ingredient_match import (
     rank_matches,
 )
 from services.pantry_parser import ADD, CONSUME_ALL, FREEZE, OPEN, SPOIL, PantryAction
-from services.tj_catalog import download_image
+from services.tj_catalog import barcodes_for_sku, download_image
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +189,8 @@ async def create_product(
 
     if tj_item and tj_item.get("image_url"):
         await _attach_picture(grocy, product_id, tj_item)
+    if tj_item:
+        await _register_barcodes(grocy, product_id, tj_item["sku"])
 
     record_pantry_product(product_id, name, tj_item["sku"] if tj_item else None)
     learn(text, product_id, created_by)
@@ -214,12 +216,25 @@ async def _attach_picture(grocy: Grocy, product_id: int, tj_item: dict) -> None:
         logger.warning("Couldn't attach a picture to product %s: %s", product_id, error)
 
 
+async def _register_barcodes(grocy: Grocy, product_id: int, sku: str) -> None:
+    """Let Grocy's own barcode scanning (its mobile web UI, Barcode Buddy)
+    recognize the TJ's package. Best-effort: a barcode already registered
+    to another product is left alone."""
+    for barcode in barcodes_for_sku(sku):
+        try:
+            await grocy.create_object("product_barcodes", {"product_id": product_id, "barcode": barcode})
+        except GrocyError as error:
+            logger.info("Skipping barcode %s for product %s: %s", barcode, product_id, error)
+
+
 async def relink_tj_item(grocy: Grocy, product_id: int, name: str, sku: str) -> None:
-    """/pantry_fix: point a product at a different TJ's item (new photo)."""
+    """/pantry_fix: point a product at a different TJ's item (new photo,
+    and its barcode now scans as this product too)."""
     tj_item = get_tj_product(sku)
     record_pantry_product(product_id, name, sku)
     if tj_item and tj_item.get("image_url"):
         await _attach_picture(grocy, product_id, tj_item)
+    await _register_barcodes(grocy, product_id, sku)
 
 
 # --- put-away (OurGroceries crossed-off -> stock) ---
@@ -259,26 +274,39 @@ def plan_put_away(crossed_off: list[dict], state: PantryState, catalog: list[dic
     return plan
 
 
+@dataclass
+class PutAwayResult:
+    lines: list[str]
+    transactions: list[str]
+    done: list[PutAwayItem]  # only these were actually added to stock
+
+
 async def put_away(
     grocy: Grocy,
     state: PantryState,
     items: list[PutAwayItem],
     created_by: str | None = None,
-) -> tuple[list[str], list[str]]:
+) -> PutAwayResult:
     """Add one of each item to stock (creating products as needed) at TJ's
-    price. Returns (summary lines, transaction IDs for undo)."""
-    lines, transactions = [], []
+    price. One item failing doesn't stop the rest - and what *did* get
+    added is reported, so it can be undone and isn't offered again."""
+    result = PutAwayResult([], [], [])
     for item in items:
-        product = item.product or await create_product(grocy, state, item.text, item.tj_item, created_by)
-        if item.product:
-            learn(item.text, product["id"], created_by)
-        sku = state.tj_skus.get(product["id"])
-        tj_item = item.tj_item or (get_tj_product(sku) if sku else None)
-        price = tj_item.get("price") if tj_item else None
-        transactions.append(await grocy.add_stock(product["id"], 1, price=price))
+        try:
+            product = item.product or await create_product(grocy, state, item.text, item.tj_item, created_by)
+            if item.product:
+                learn(item.text, product["id"], created_by)
+            sku = state.tj_skus.get(product["id"])
+            tj_item = item.tj_item or (get_tj_product(sku) if sku else None)
+            price = tj_item.get("price") if tj_item else None
+            result.transactions.append(await grocy.add_stock(product["id"], 1, price=price))
+        except GrocyError as error:
+            result.lines.append(f"❌ {item.text}: {error}")
+            continue
         state.stock[product["id"]] = state.amount(product["id"]) + 1
-        lines.append(f"• {product['name']}" + (" _(new)_" if not item.product else ""))
-    return lines, transactions
+        result.lines.append(f"• {product['name']}" + (" _(new)_" if not item.product else ""))
+        result.done.append(item)
+    return result
 
 
 # --- plain-English actions ---

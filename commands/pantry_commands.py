@@ -101,6 +101,17 @@ async def _undo_all(transaction_ids: list[str]) -> None:
             await grocy.undo_transaction(transaction_id)
 
 
+async def _claim(view: discord.ui.View, interaction: discord.Interaction) -> bool:
+    """Make a confirm/undo button fire once. A quick double-tap would
+    otherwise put everything away (or use it up) twice before the first
+    click's response replaces the buttons."""
+    if getattr(view, "claimed", False):
+        await interaction.response.send_message("⏳ Already on it.", ephemeral=True)
+        return False
+    view.claimed = True
+    return True
+
+
 # --- shared buttons ---
 
 
@@ -111,10 +122,13 @@ class UndoPantryButton(discord.ui.Button):
         self.og_item_ids = og_item_ids or []
 
     async def callback(self, interaction: discord.Interaction):
+        if not await _claim(self.view, interaction):
+            return
         await interaction.response.defer()
         try:
             await _undo_all(self.transaction_ids)
         except (GrocyError, GrocyNotConfigured) as error:
+            self.view.claimed = False  # let them retry
             await interaction.followup.send(f"❌ I couldn't undo that: {error}", ephemeral=True)
             return
         # Put-away undo: offer these list items again next time.
@@ -239,6 +253,8 @@ class ConfirmPutAwayButton(discord.ui.Button):
         self.list_id = list_id
 
     async def callback(self, interaction: discord.Interaction):
+        if not await _claim(self.view, interaction):
+            return
         chosen = _checked_payloads(self.view)
         unchosen = [
             child.payload for child in self.view.children if isinstance(child, ToggleButton) and not child.checked
@@ -256,15 +272,17 @@ class ConfirmPutAwayButton(discord.ui.Button):
         try:
             async with Grocy() as grocy:
                 state = await load_state(grocy)
-                lines, transactions = await put_away(grocy, state, chosen, interaction.user.display_name)
+                result = await put_away(grocy, state, chosen, interaction.user.display_name)
         except (GrocyError, GrocyNotConfigured) as error:
-            await interaction.edit_original_response(content=f"❌ I couldn't update the pantry: {error}", view=None)
+            await interaction.edit_original_response(content=f"❌ I couldn't reach the pantry: {error}", view=None)
             return
 
-        record_og_imported([(item.og_item_id, item.crossed_off_at) for item in chosen], self.list_id, now)
+        # Only what actually made it into stock counts as put away; anything
+        # that failed is offered again next /put_away.
+        record_og_imported([(item.og_item_id, item.crossed_off_at) for item in result.done], self.list_id, now)
         await interaction.edit_original_response(
-            content="🧺 Put away:\n" + "\n".join(lines),
-            view=ResultView(transactions, og_item_ids=[item.og_item_id for item in chosen]),
+            content="🧺 Put away:\n" + "\n".join(result.lines),
+            view=ResultView(result.transactions, og_item_ids=[item.og_item_id for item in result.done]),
         )
 
 
@@ -282,6 +300,8 @@ class ConfirmConsumeButton(discord.ui.Button):
         super().__init__(label="Use Up Selected", style=discord.ButtonStyle.primary)
 
     async def callback(self, interaction: discord.Interaction):
+        if not await _claim(self.view, interaction):
+            return
         chosen = _checked_payloads(self.view)
         if not chosen:
             await interaction.response.edit_message(content="Nothing selected — pantry unchanged.", view=None)
@@ -293,16 +313,21 @@ class ConfirmConsumeButton(discord.ui.Button):
             async with Grocy() as grocy:
                 state = await load_state(grocy)
                 for row in chosen:
-                    result = await apply_action(
-                        grocy, state, PantryAction(CONSUME, row["ingredient"], row["amount"]), row["product"]
-                    )
+                    # One failure shouldn't hide (or lose the undo for) the rest.
+                    try:
+                        result = await apply_action(
+                            grocy, state, PantryAction(CONSUME, row["ingredient"], row["amount"]), row["product"]
+                        )
+                    except GrocyError as error:
+                        lines.append(f"❌ {row['product']['name']}: {error}")
+                        continue
                     lines.append(result.line)
                     if result.transaction_id:
                         transactions.append(result.transaction_id)
                     if result.ran_out:
                         ran_out.append(result.ran_out)
         except (GrocyError, GrocyNotConfigured) as error:
-            await interaction.edit_original_response(content=f"❌ I couldn't update the pantry: {error}", view=None)
+            await interaction.edit_original_response(content=f"❌ I couldn't reach the pantry: {error}", view=None)
             return
 
         await interaction.edit_original_response(
@@ -370,6 +395,8 @@ class ChooseProductButton(discord.ui.Button):
         self.product = product
 
     async def callback(self, interaction: discord.Interaction):
+        if not await _claim(self.view, interaction):
+            return
         await interaction.response.defer()
         try:
             async with Grocy() as grocy:
@@ -425,9 +452,13 @@ async def handle_pantry_text(text: str, user_name: str) -> list[tuple[str, disco
                 continue
 
             product = match.item if confident else None
+            try:
+                result = await apply_action(grocy, state, action, product, user_name)
+            except GrocyError as error:
+                lines.append(f"❌ {action.item}: {error}")
+                continue
             if product is not None:
                 learn(action.item, product["id"], user_name)
-            result = await apply_action(grocy, state, action, product, user_name)
             lines.append(result.line)
             if result.transaction_id:
                 transactions.append(result.transaction_id)
@@ -444,27 +475,53 @@ async def handle_pantry_text(text: str, user_name: str) -> list[tuple[str, disco
 # --- expiry nudges ---
 
 
-class ExpiryActionButton(discord.ui.Button):
-    def __init__(self, item: dict, kind: str):
-        label = f"🧊 Froze {item['name']}" if kind == FREEZE else f"✅ Used {item['name']}"
-        super().__init__(label=label[:80], style=discord.ButtonStyle.primary if kind == FREEZE else discord.ButtonStyle.success)
-        self.item = item
+# The 9am expiry nudge and 7pm put-away nudge sit in #nudges for hours, so
+# their buttons are DynamicItems: everything they need is in the custom_id,
+# and they keep working after Rosie restarts (e.g. a git pull + restart).
+
+EXPIRY_KINDS = {"freeze": FREEZE, "used": CONSUME_ALL}
+
+
+class ExpiryActionButton(
+    discord.ui.DynamicItem[discord.ui.Button],
+    template=r"pantry:expiry:(?P<kind>freeze|used):(?P<product_id>\d+)",
+):
+    def __init__(self, kind: str, product_id: int, name: str = "", row: int | None = None):
+        label = f"🧊 Froze {name}" if kind == "freeze" else f"✅ Used {name}"
+        super().__init__(
+            discord.ui.Button(
+                label=label[:80],
+                style=discord.ButtonStyle.primary if kind == "freeze" else discord.ButtonStyle.success,
+                custom_id=f"pantry:expiry:{kind}:{product_id}",
+                row=row,
+            )
+        )
         self.kind = kind
+        self.product_id = product_id
+
+    @classmethod
+    async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match):
+        return cls(match["kind"], int(match["product_id"]))
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer()
-        action = PantryAction(self.kind, self.item["name"])
         try:
             async with Grocy() as grocy:
                 state = await load_state(grocy)
-                result = await apply_action(grocy, state, action, state.product(self.item["product_id"]))
+                product = state.product(self.product_id)
+                action = PantryAction(EXPIRY_KINDS[self.kind], product["name"] if product else "that")
+                result = await apply_action(grocy, state, action, product)
         except (GrocyError, GrocyNotConfigured) as error:
             await interaction.followup.send(f"❌ I couldn't update the pantry: {error}", ephemeral=True)
             return
-        for child in self.view.children:
-            if isinstance(child, ExpiryActionButton) and child.item["product_id"] == self.item["product_id"]:
+
+        # Grey out both of this product's buttons; rebuilt from the message
+        # itself since after a restart there's no in-memory view to edit.
+        view = discord.ui.View.from_message(interaction.message, timeout=None)
+        for child in view.children:
+            if getattr(child, "custom_id", "").endswith(f":{self.product_id}"):
                 child.disabled = True
-        await interaction.message.edit(view=self.view)
+        await interaction.message.edit(view=view)
         await interaction.followup.send(f"{result.line} (by {interaction.user.display_name})")
 
 
@@ -472,11 +529,8 @@ class ExpiryNudgeView(discord.ui.View):
     def __init__(self, items: list[dict]):
         super().__init__(timeout=None)
         for row, item in enumerate(items[:EXPIRY_NUDGE_LIMIT]):
-            freeze = ExpiryActionButton(item, FREEZE)
-            used = ExpiryActionButton(item, CONSUME_ALL)
-            freeze.row = used.row = row
-            self.add_item(freeze)
-            self.add_item(used)
+            self.add_item(ExpiryActionButton("freeze", item["product_id"], item["name"], row=row))
+            self.add_item(ExpiryActionButton("used", item["product_id"], item["name"], row=row))
 
 
 # --- the cog ---
@@ -632,7 +686,7 @@ class Pantry(commands.Cog):
         set_state(SHOPPING_NUDGE_STATE_KEY, ",".join(keys))
         await channel.send(
             f"🛒 Looks like you shopped — **{len(pending)}** item(s) crossed off. Put them in the pantry?",
-            view=PutAwayNudgeView(self),
+            view=PutAwayNudgeView(),
         )
 
     @shopping_check_task.before_loop
@@ -793,10 +847,11 @@ class Pantry(commands.Cog):
         ]
         if not items:
             return
-        set_state(
-            EXPIRY_NUDGED_STATE_KEY,
-            ",".join(sorted(already | {f"{item['product_id']}:{item['best_before_date']}" for item in items}))[-4000:],
-        )
+        # Remember what's been nudged (product + date, so a re-bought pack
+        # with a new date nudges again); keep only the most recent entries.
+        nudged = sorted(already | {f"{item['product_id']}:{item['best_before_date']}" for item in items},
+                        key=lambda key: key.split(":", 1)[1])
+        set_state(EXPIRY_NUDGED_STATE_KEY, ",".join(nudged[-200:]))
         await channel.send(
             "⏰ **Use it or freeze it:**\n" + "\n".join(format_expiring_lines(items, today, limit=EXPIRY_NUDGE_LIMIT)),
             view=ExpiryNudgeView(items),
@@ -846,21 +901,31 @@ class Pantry(commands.Cog):
         await self.bot.wait_until_ready()
 
 
-class PutAwayNudgeButton(discord.ui.Button):
-    def __init__(self, cog: Pantry):
-        super().__init__(label="🧺 Put away", style=discord.ButtonStyle.primary)
-        self.cog = cog
+class PutAwayNudgeButton(discord.ui.DynamicItem[discord.ui.Button], template=r"pantry:put_away"):
+    def __init__(self):
+        super().__init__(
+            discord.ui.Button(label="🧺 Put away", style=discord.ButtonStyle.primary, custom_id="pantry:put_away")
+        )
+
+    @classmethod
+    async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match):
+        return cls()
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
-        await self.cog.send_put_away(interaction)
+        cog = interaction.client.get_cog("Pantry")
+        if cog is None:
+            await interaction.followup.send("❌ The pantry isn't loaded right now.", ephemeral=True)
+            return
+        await cog.send_put_away(interaction)
 
 
 class PutAwayNudgeView(discord.ui.View):
-    def __init__(self, cog: Pantry):
+    def __init__(self):
         super().__init__(timeout=None)
-        self.add_item(PutAwayNudgeButton(cog))
+        self.add_item(PutAwayNudgeButton())
 
 
 async def setup(bot):
+    bot.add_dynamic_items(PutAwayNudgeButton, ExpiryActionButton)
     await bot.add_cog(Pantry(bot))

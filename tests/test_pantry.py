@@ -80,22 +80,25 @@ class SetupTests(PantryTestCase):
 class CreateProductTests(PantryTestCase):
     async def test_meat_gets_fridge_shelf_life_and_tj_group(self):
         grocy = _grocy()
-        grocy.create_object.side_effect = [7, 99]  # product group, then product
+        grocy.create_object.side_effect = [7, 99, 1, 2, 3]  # group, product, 3 barcodes
         state = _state()
         tj_item = {
-            "sku": "055555", "name": "Ground Beef 85/15", "category": "Meat, Seafood & Plant-based",
+            "sku": "052148", "name": "Ground Beef 85/15", "category": "Meat, Seafood & Plant-based",
             "subcategory": "Beef, Pork & Lamb", "price": 6.49, "image_url": None,
         }
 
         product = await create_product(grocy, state, "ground beef", tj_item, "Sam")
 
         self.assertEqual(product, {"id": 99, "name": "Ground beef", "location_id": 10})
-        data = grocy.create_object.await_args_list[-1].args[1]
+        calls = {call.args[0]: call.args[1] for call in grocy.create_object.await_args_list}
+        data = calls["products"]
+        barcodes = [call.args[1]["barcode"] for call in grocy.create_object.await_args_list if call.args[0] == "product_barcodes"]
+        self.assertEqual(barcodes, ["00521482", "000000521482", "0000000521482"])
         self.assertEqual(data["default_best_before_days"], 3)
         self.assertEqual(data["default_best_before_days_after_freezing"], 120)
         self.assertEqual(data["product_group_id"], 7)
         self.assertIn(product, state.products)
-        self.assertEqual(state.tj_skus[99], "055555")
+        self.assertEqual(state.tj_skus[99], "052148")
 
     async def test_untracked_category_never_expires(self):
         grocy = _grocy()
@@ -104,6 +107,26 @@ class CreateProductTests(PantryTestCase):
         data = grocy.create_object.await_args_list[-1].args[1]
         self.assertEqual(data["default_best_before_days"], -1)
         self.assertEqual(data["location_id"], 30)
+
+    async def test_no_tj_match_still_gets_the_right_aisle(self):
+        grocy = _grocy()
+        await create_product(grocy, _state(), "pork chops", None)
+        data = next(call.args[1] for call in grocy.create_object.await_args_list if call.args[0] == "products")
+        self.assertEqual((data["location_id"], data["default_best_before_days"]), (10, 3))
+
+    async def test_duplicate_barcode_does_not_block_creation(self):
+        from services.grocy import GrocyError
+
+        grocy = _grocy()
+
+        async def create(entity, data):
+            if entity == "product_barcodes":
+                raise GrocyError("UNIQUE constraint failed: product_barcodes.barcode")
+            return 99
+
+        grocy.create_object.side_effect = create
+        product = await create_product(grocy, _state(), "fried rice", {"sku": "052148", "name": "Vegetable Fried Rice", "image_url": None})
+        self.assertEqual(product["id"], 99)
 
 
 class ApplyActionTests(PantryTestCase):
@@ -169,11 +192,29 @@ class PutAwayTests(PantryTestCase):
         self.assertEqual(plan[1].tj_item["sku"], "1")
         self.assertEqual(plan[1].label(), "bananas → new: Organic Bananas")
 
-        lines, transactions = await put_away(grocy, state, plan, "Sam")
-        self.assertEqual(lines, ["• Egg", "• Banana _(new)_"])
-        self.assertEqual(transactions, ["tx-add", "tx-add"])
+        result = await put_away(grocy, state, plan, "Sam")
+        self.assertEqual(result.lines, ["• Egg", "• Banana _(new)_"])
+        self.assertEqual(result.transactions, ["tx-add", "tx-add"])
+        self.assertEqual(result.done, plan)
         self.assertEqual(state.amount(2), 13)
         grocy.add_stock.assert_any_await(99, 1, price=0.29)
+
+    async def test_one_failure_does_not_lose_the_rest(self):
+        from services.grocy import GrocyError
+
+        grocy, state = _grocy(), _state()
+        grocy.add_stock.side_effect = ["tx-1", GrocyError("Grocy said: nope"), "tx-3"]
+        crossed_off = [
+            {"item_id": key, "crossed_off_at": "", "list_id": "L", "text": text}
+            for key, text in (("a", "eggs"), ("b", "milk"), ("c", "chicken thighs"))
+        ]
+        plan = plan_put_away(crossed_off, state, [])
+
+        result = await put_away(grocy, state, plan)
+
+        self.assertEqual([item.og_item_id for item in result.done], ["a", "c"])
+        self.assertEqual(result.transactions, ["tx-1", "tx-3"])
+        self.assertIn("❌ milk", result.lines[1])
 
 
 class RecipeTests(PantryTestCase):

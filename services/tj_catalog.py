@@ -88,6 +88,29 @@ def _price(value) -> float | None:
         return None
 
 
+def _check_digit(digits: str) -> str:
+    """GS1 check digit (EAN-8 / UPC-A / EAN-13 all agree for zero-padded codes)."""
+    total = sum(int(digit) * (3 if index % 2 == 0 else 1) for index, digit in enumerate(reversed(digits)))
+    return str((10 - total % 10) % 10)
+
+
+def barcodes_for_sku(sku: str) -> list[str]:
+    """The barcodes printed on a Trader Joe's-brand package for this SKU.
+
+    TJ's house-brand barcodes are "00" + the SKU's last 5 digits + a check
+    digit - verified against every FDA recall notice listing both a TJ's UPC
+    and a product still in the catalog (13 of 13 matched; e.g. Vegetable
+    Fried Rice is SKU 052148, UPC 00521482). Scanners report that as 8, 12,
+    or 13 digits depending on the app, so all three forms are returned.
+    Name-brand items sold at TJ's carry their own UPCs and won't match."""
+    digits = "".join(character for character in sku if character.isdigit())
+    if len(digits) < 5:
+        return []
+    body = "00" + digits[-5:]
+    ean8 = body + _check_digit(body)
+    return [ean8, "0000" + ean8, "00000" + ean8]
+
+
 def parse_products(response_json: dict) -> tuple[list[dict], int]:
     """Turn one GraphQL page into catalog rows. Returns (rows, total_pages).
 

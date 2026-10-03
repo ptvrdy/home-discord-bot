@@ -1,7 +1,26 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from services.tj_catalog import fetch_catalog, parse_products
+from services.tj_catalog import barcodes_for_sku, fetch_catalog, parse_products
+
+
+class BarcodeTests(unittest.TestCase):
+    def test_matches_upcs_from_real_fda_recall_notices(self):
+        # (catalog SKU, the UPC printed in the FDA notice for that product)
+        for sku, upc in [
+            ("052148", "00521482"),  # Vegetable Fried Rice
+            ("057879", "00578790"),  # Organic Tomato & Roasted Red Pepper Soup
+            ("050754", "00507547"),  # Gluten Free Joe-Joe's
+            ("053835", "00538350"),  # Organic French Baguette
+            ("099284", "00992848"),  # Solid White Albacore Tuna
+        ]:
+            self.assertEqual(barcodes_for_sku(sku)[0], upc, sku)
+
+    def test_returns_all_scanner_lengths(self):
+        self.assertEqual(barcodes_for_sku("052148"), ["00521482", "000000521482", "0000000521482"])
+
+    def test_bad_sku(self):
+        self.assertEqual(barcodes_for_sku("12"), [])
 
 
 def _page(items, current_page=1, total_pages=1):
