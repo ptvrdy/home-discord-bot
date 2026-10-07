@@ -60,6 +60,7 @@ from services.pantry import (
     merge_duplicate,
     plan_restock,
     preferred_list,
+    publish_shelf_life_rules,
     relink_tj_item,
     sync_barcode_prices,
     use_soon_text,
@@ -655,6 +656,7 @@ class Pantry(commands.Cog):
         self.bot = bot
         self.pantry_channel_id = _channel_id("PANTRY_CHANNEL_ID")
         self.nudges_channel_id = _channel_id("NUDGES_CHANNEL_ID")
+        publish_shelf_life_rules()  # for Grocy's TJ's barcode plugin
         self.catalog_sync_task.start()
         self.shopping_check_task.start()
         self.expiry_check_task.start()

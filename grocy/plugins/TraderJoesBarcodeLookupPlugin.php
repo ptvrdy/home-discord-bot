@@ -17,9 +17,12 @@ use Grocy\Services\StockService;
 	those, the item is looked up in the copy of the TJ's catalog Rosie keeps
 	(re-synced monthly) - traderjoes.com itself blocks requests from Grocy. The
 	new product gets TJ's name, a home location / shelf life / product group
-	from TJ's category (same rules as Rosie's config/shelf_life.py - keep the
-	two in sync), and TJ's price on the barcode so the Purchase page pre-fills
-	it. Rosie adds the product photo within ~10 minutes.
+	from TJ's category, and TJ's price on the barcode so the Purchase page
+	pre-fills it. Rosie adds the product photo within ~10 minutes.
+
+	The shelf-life rules come from Rosie's database too: she stores the rules
+	from her config/shelf_life.py there on every startup, so that file is the
+	one place to change them.
 
 	Anything else (name-brand items), or anything not in the catalog, falls
 	through to Grocy's built-in Open Food Facts plugin, exactly as before.
@@ -29,30 +32,20 @@ class TraderJoesBarcodeLookupPlugin extends BaseBarcodeLookupPlugin
 {
 	public const PLUGIN_NAME = "Trader Joe's (falls back to Open Food Facts)";
 
-	// Mirrors Rosie's config/shelf_life.py: [category, subcategory|null, location, days, freezer days].
-	// -1 = never expires (no use-soon nagging). Produce is off there too (TRACK_PRODUCE = False).
-	private const SHELF_LIFE_RULES = [
-		['Meat, Seafood & Plant-based', 'Chicken & Turkey', 'Fridge', 2, 120],
-		['Meat, Seafood & Plant-based', 'Beef, Pork & Lamb', 'Fridge', 3, 120],
-		['Meat, Seafood & Plant-based', 'Fish & Seafood', 'Fridge', 2, 90],
-		['Meat, Seafood & Plant-based', null, 'Fridge', -1, 90],
-		['Fresh Fruits & Veggies', null, 'Fridge', -1, 180],
-		['From The Freezer', null, 'Freezer', -1, -1],
-		['Dairy & Eggs', null, 'Fridge', -1, -1],
-		['Cheese', null, 'Fridge', -1, -1],
-		['Fresh Prepared Foods', null, 'Fridge', -1, -1],
-	];
+	// Used only if Rosie hasn't stored her rules yet: Pantry, never expires.
+	private const DEFAULT_SHELF_LIFE = ['Pantry', -1, -1];
 
 	protected function ExecuteLookup($barcode)
 	{
 		$sku = self::SkuFromBarcode($barcode);
-		$item = $sku === null ? null : self::CatalogItem($sku);
+		$db = $sku === null ? null : self::RosieDb();
+		$item = $db === null ? null : self::CatalogItem($db, $sku);
 		if ($item === null)
 		{
 			return $this->OpenFoodFactsLookup($barcode);
 		}
 
-		[$locationName, $days, $freezerDays] = self::ShelfLife($item['category'], $item['subcategory']);
+		[$locationName, $days, $freezerDays] = self::ShelfLife(self::ShelfLifeRules($db), $item['category'], $item['subcategory']);
 		$output = [
 			'name' => trim($item['name']),
 			'location_id' => $this->LocationId($locationName),
@@ -110,9 +103,8 @@ class TraderJoesBarcodeLookupPlugin extends BaseBarcodeLookupPlugin
 		return '0' . substr($digits, 2, 5);
 	}
 
-	// Rosie's catalog copy, opened read-only. Items TJ's has since dropped
-	// still count (old packages keep their barcodes), current ones first.
-	private static function CatalogItem($sku)
+	// Rosie's database, opened read-only.
+	private static function RosieDb()
 	{
 		$path = getenv('ROSIE_DB');
 		if (empty($path) || !is_readable($path))
@@ -123,6 +115,20 @@ class TraderJoesBarcodeLookupPlugin extends BaseBarcodeLookupPlugin
 		{
 			$db = new \PDO('sqlite:' . $path, null, null, [\PDO::SQLITE_ATTR_OPEN_FLAGS => \PDO::SQLITE_OPEN_READONLY]);
 			$db->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
+			return $db;
+		}
+		catch (\Throwable $error)
+		{
+			return null;
+		}
+	}
+
+	// Items TJ's has since dropped still count (old packages keep their
+	// barcodes), current ones first.
+	private static function CatalogItem($db, $sku)
+	{
+		try
+		{
 			$query = $db->prepare('SELECT name, category, subcategory, price FROM tj_products WHERE sku = ? ORDER BY discontinued_at IS NOT NULL LIMIT 1');
 			$query->execute([$sku]);
 			$row = $query->fetch(\PDO::FETCH_ASSOC);
@@ -134,6 +140,24 @@ class TraderJoesBarcodeLookupPlugin extends BaseBarcodeLookupPlugin
 		}
 	}
 
+	// The rules from Rosie's config/shelf_life.py, as she stored them on
+	// startup: [{category, subcategory|null, location, days, freezer_days}],
+	// checked in order. -1 days = never expires.
+	private static function ShelfLifeRules($db)
+	{
+		try
+		{
+			$query = $db->prepare("SELECT value FROM bot_state WHERE key = 'shelf_life_rules'");
+			$query->execute();
+			$rules = json_decode((string)$query->fetchColumn(), true);
+			return is_array($rules) ? $rules : [];
+		}
+		catch (\Throwable $error)
+		{
+			return [];
+		}
+	}
+
 	private function OpenFoodFactsLookup($barcode)
 	{
 		$path = dirname((new \ReflectionClass(StockService::class))->getFileName()) . '/../plugins/OpenFoodFactsBarcodeLookupPlugin.php';
@@ -141,16 +165,16 @@ class TraderJoesBarcodeLookupPlugin extends BaseBarcodeLookupPlugin
 		return (new \OpenFoodFactsBarcodeLookupPlugin($this->Locations, $this->QuantityUnits, $this->UserSettings))->Lookup($barcode);
 	}
 
-	private static function ShelfLife($category, $subcategory)
+	private static function ShelfLife($rules, $category, $subcategory)
 	{
-		foreach (self::SHELF_LIFE_RULES as [$ruleCategory, $ruleSubcategory, $location, $days, $freezerDays])
+		foreach ($rules as $rule)
 		{
-			if ($ruleCategory === $category && ($ruleSubcategory === null || $ruleSubcategory === $subcategory))
+			if (($rule['category'] ?? null) === $category && (($rule['subcategory'] ?? null) === null || $rule['subcategory'] === $subcategory))
 			{
-				return [$location, $days, $freezerDays];
+				return [$rule['location'], (int)$rule['days'], (int)$rule['freezer_days']];
 			}
 		}
-		return ['Pantry', -1, -1];
+		return self::DEFAULT_SHELF_LIFE;
 	}
 
 	private function LocationId($name)

@@ -31,8 +31,10 @@ Open `http://<this machine>:9283`, log in as `admin` / `admin`, then:
 Rosie creates the Fridge / Freezer / Pantry locations herself.
 
 **Updating:** after a `git pull` that changes anything in this folder, run
-`docker compose up -d` again. To get a newer Grocy version, run
-`docker compose pull && docker compose up -d`.
+`docker compose up -d` again. Grocy is pinned to version 4.7.1, the one the plugin was
+tested on. To move to a newer Grocy, change the image tag in `docker-compose.yml`, run
+`docker compose pull && docker compose up -d`, then scan a Trader Joe's item and run
+`/in_stock` to check everything still works.
 
 ## Scanning Trader Joe's barcodes
 

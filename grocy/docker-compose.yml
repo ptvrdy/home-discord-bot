@@ -5,7 +5,11 @@
 # git-ignored, like the per-machine .env (see .env.example).
 services:
   grocy:
-    image: lscr.io/linuxserver/grocy:latest
+    # Pinned to the Grocy version the TJ's plugin and Rosie were tested against
+    # (still gets the image's security patches). To upgrade: change the tag,
+    # `docker compose pull && docker compose up -d`, then scan a TJ's item and
+    # run /in_stock to check the plugin and API still work.
+    image: lscr.io/linuxserver/grocy:4.7.1
     container_name: grocy
     environment:
       - PUID=1000

@@ -83,6 +83,26 @@ def guess_category(words: list[str], frozen: bool = False) -> tuple[str | None, 
     return None, None
 
 
+def rules_for_export() -> list[dict]:
+    """The rules above, resolved (produce on/off applied), in the order
+    they're checked. Rosie stores these in her database on startup so
+    Grocy's Trader Joe's barcode plugin uses exactly the same rules - this
+    file is the only place to edit them."""
+    exported = []
+    for category, subcategory, rule in SHELF_LIFE_RULES:
+        days = NEVER_EXPIRES if rule.get("produce") and not TRACK_PRODUCE else rule["days"]
+        exported.append(
+            {
+                "category": category,
+                "subcategory": subcategory,
+                "location": rule["location"],
+                "days": days,
+                "freezer_days": rule["freezer_days"],
+            }
+        )
+    return exported
+
+
 def shelf_life_for(category: str | None, subcategory: str | None) -> dict:
     """{"location", "days", "freezer_days"} for a TJ's category pair."""
     for rule_category, rule_subcategory, rule in SHELF_LIFE_RULES:

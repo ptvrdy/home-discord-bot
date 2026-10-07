@@ -9,11 +9,12 @@ Products are created the first time something is bought, never in bulk, so
 Grocy only ever holds things this household actually buys.
 """
 
+import json
 import logging
 import re
 from dataclasses import dataclass, field
 
-from config.shelf_life import FREEZER, FRIDGE, NEVER_EXPIRES, PANTRY, guess_category, shelf_life_for
+from config.shelf_life import FREEZER, FRIDGE, NEVER_EXPIRES, PANTRY, guess_category, rules_for_export, shelf_life_for
 from services.database import (
     get_pantry_aliases,
     get_pantry_products,
@@ -22,6 +23,7 @@ from services.database import (
     merge_pantry_products,
     record_pantry_product,
     set_pantry_alias,
+    set_state,
 )
 from services.grocy import Grocy, GrocyError
 from services.ingredient_match import (
@@ -597,6 +599,19 @@ def in_pantry_ingredients(ingredients: list[str], state: PantryState) -> set[str
         if match and match.score >= CONFIDENT_SCORE and state.amount(match.item["id"]) > 0:
             found.add(ingredient.strip().lower())
     return found
+
+
+# --- shelf-life rules shared with Grocy's barcode plugin ---
+
+# bot_state key the Trader Joe's barcode plugin (grocy/plugins/) reads.
+SHELF_LIFE_RULES_STATE_KEY = "shelf_life_rules"
+
+
+def publish_shelf_life_rules() -> None:
+    """Store config/shelf_life.py's rules where the Grocy plugin reads them,
+    so a product created by scanning gets the same location and shelf life
+    as one Rosie creates. Called on startup."""
+    set_state(SHELF_LIFE_RULES_STATE_KEY, json.dumps(rules_for_export()))
 
 
 # --- auto-restock ---
