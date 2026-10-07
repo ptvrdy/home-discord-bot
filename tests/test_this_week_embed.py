@@ -57,6 +57,20 @@ class BuildThisWeekEmbedTests(unittest.TestCase):
             ],
         )
 
+    def test_divider_between_sunday_and_the_food_section(self):
+        embed = build_this_week_embed(MONDAY, [], [], NOW)
+        names = [field.name for field in embed.fields]
+        sunday = names.index("Sunday, Jul 26")
+        divider = embed.fields[sunday + 1]
+        self.assertEqual(divider.value, ". ⋅ ˚̣- : ✧ : – ⭒ ⊹ ⭒ – : ✧ : -˚̣⋅ .")
+        self.assertEqual(divider.name, "​")
+        self.assertEqual(names[sunday + 2], "🍽️ This Week's Food")
+
+    def test_empty_food_section_has_no_stray_underscores(self):
+        embed = build_this_week_embed(MONDAY, [], [], NOW)
+        food = next(f for f in embed.fields if f.name == "🍽️ This Week's Food")
+        self.assertEqual(food.value, "Nothing planned yet — `/plan_meal` to add one")
+
     def test_empty_day_shows_nothing_scheduled(self):
         embed = build_this_week_embed(MONDAY, [], [], NOW)
 

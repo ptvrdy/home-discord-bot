@@ -18,6 +18,9 @@ FOOD_FIELD_LIMIT = 1024
 OFFICE_EMOJI = "🏢"
 HOME_EMOJI = "🏠"
 MEAL_TYPES = (("breakfast", "🍳 Breakfast"), ("lunch", "🥪 Lunch"), ("dinner", "🍽️ Dinner"))
+# Separates the seven days from the food/pantry/chore sections below them.
+DAYS_DIVIDER = ". ⋅ ˚̣- : ✧ : – ⭒ ⊹ ⭒ – : ✧ : -˚̣⋅ ."
+BLANK_FIELD_NAME = "​"  # zero-width space: Discord requires a field name
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -102,7 +105,9 @@ def _meal_plan_field_value(meal_plan_items: list[dict]) -> str:
             sections.append(f"**{label}**\n{lines}")
 
     if not sections:
-        return "_Nothing planned yet — /plan_meal to add one_"
+        # Not italicized: the underscore in /plan_meal would end the italics
+        # early, leaving a stray "_" on screen and "/planmeal" for the command.
+        return "Nothing planned yet — `/plan_meal` to add one"
     return "\n\n".join(sections)
 
 
@@ -169,6 +174,8 @@ def build_this_week_embed(
 
         value = _truncate("\n\n".join(parts), DAY_FIELD_LIMIT)
         embed.add_field(name=day.strftime("%A, %b %d"), value=value, inline=False)
+
+    embed.add_field(name=BLANK_FIELD_NAME, value=DAYS_DIVIDER, inline=False)
 
     embed.add_field(
         name="🍽️ This Week's Food",
