@@ -11,6 +11,7 @@ from services.embed import (
     build_instructions_embed,
     build_stats_embed,
     create_recipe_embed,
+    mirrored_image_filename,
 )
 
 
@@ -42,6 +43,27 @@ class RecipeEmbedTests(unittest.TestCase):
         normalized_description = embed.description.replace("\xa0", " ")
         self.assertIn("4 servings", normalized_description)
         self.assertIn("25 minutes", normalized_description)
+
+    def test_attached_images_use_the_layout_in_their_file_name(self):
+        # No network check for an image attached to the card itself - the
+        # layout was decided at upload time.
+        with patch("services.embed.should_use_thumbnail") as should_use_thumbnail:
+            banner = create_recipe_embed(Recipe(
+                title="A", ingredients=[], image_url="attachment://recipe-image.jpg", source_url="",
+            ))
+            thumb = create_recipe_embed(Recipe(
+                title="B", ingredients=[], image_url="attachment://recipe-image-thumb.png", source_url="",
+            ))
+            should_use_thumbnail.assert_not_called()
+
+        self.assertEqual(banner.image.url, "attachment://recipe-image.jpg")
+        self.assertIsNone(banner.thumbnail.url)
+        self.assertEqual(thumb.thumbnail.url, "attachment://recipe-image-thumb.png")
+        self.assertIsNone(thumb.image.url)
+
+    def test_mirrored_image_filename(self):
+        self.assertEqual(mirrored_image_filename(".jpg", thumbnail=False), "recipe-image.jpg")
+        self.assertEqual(mirrored_image_filename(".png", thumbnail=True), "recipe-image-thumb.png")
 
     def test_ingredients_fit_within_discord_field_limit(self):
         ingredients = ["A very long ingredient " * 20 for _ in range(20)]

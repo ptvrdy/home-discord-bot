@@ -57,7 +57,12 @@ Run `/help` in Discord any time for a categorized list of every command, or see
 - **`/fix_image`** (run inside a recipe's thread) — adds or corrects just the
   image, prefilled with the current URL. Separate from `/fix` since Discord caps
   modals at 5 fields and that one's already full; leaving it blank removes the
-  image entirely.
+  image entirely. The image is downloaded and attached to the recipe card itself,
+  so it keeps showing even if the site later moves it or blocks Discord. Its
+  thumbnail-vs-banner layout comes from the real dimensions. A page link (rather
+  than a direct image), a dead link, an oversized or unsupported image, or a
+  missing `http(s)://` gets a clear message and changes nothing. If the site only
+  refuses Rosie's download, the link is saved as-is instead.
 - **`/add_instructions`** (run inside a recipe's thread) — appends new steps to
   the end of a recipe's instructions instead of replacing them, for when a
   scrape or manual entry missed the tail end. Takes just the new steps (not the

@@ -1,3 +1,5 @@
+import asyncio
+import io
 import os
 import sqlite3
 from datetime import datetime
@@ -47,6 +49,7 @@ from services.grocery_list import (
     prioritize_ingredients,
     remove_items,
 )
+from services.image_check import ImageFetchError, prepare_recipe_image
 from services.journal import build_journal_embed
 from services.recipe_tags import generate_recipe_tags
 from services.scraper import scrape_recipe
@@ -536,17 +539,34 @@ class FixRecipeImageModal(discord.ui.Modal, title="Fix Recipe Image"):
         self.thread = thread
         self.current = current
 
+        # Long image-CDN links can blow well past 300 characters, and the
+        # modal silently truncates a longer paste into a broken link.
         self.image_url = discord.ui.TextInput(
             label="Image URL",
             placeholder="https://... (leave blank to remove the image)",
             required=False,
-            max_length=300,
+            max_length=2000,
         )
+        # An image already saved on the card shows as "attachment://..." -
+        # leaving that as-is keeps it.
         self.image_url.default = current.get("image_url") or ""
         self.add_item(self.image_url)
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
+
+        submitted = self.image_url.value.strip() or None
+        prepared = None
+        if submitted and submitted != self.current.get("image_url"):
+            # Download it to attach to the card itself - and say *why* if
+            # that's not possible (an HTML page, a dead link, ...) instead
+            # of reporting success for a picture that won't show.
+            try:
+                prepared = await asyncio.to_thread(prepare_recipe_image, submitted)
+            except ImageFetchError as error:
+                await interaction.followup.send(f"❌ {error.message} Nothing was changed.", ephemeral=True)
+                return
+        new_image_url = prepared.image_url if prepared else submitted
 
         recipe = RecipeData(
             title=self.current["title"],
@@ -557,19 +577,33 @@ class FixRecipeImageModal(discord.ui.Modal, title="Fix Recipe Image"):
             total_time=self.current.get("total_time"),
             total_minutes=self.current.get("total_minutes"),
             yields=self.current.get("yields"),
-            image_url=self.image_url.value.strip() or None,
+            image_url=new_image_url,
             source_url=self.current["source_url"],
             source_name=self.current["source_name"],
         )
         recipe.tags = get_recipe_tags(self.thread.id)
 
+        # Attachments only change when the image does: a new download replaces
+        # any old one, and removing the image or switching to a plain link
+        # drops it. An unchanged image is left exactly as it is.
+        edit_kwargs: dict = {"embed": create_recipe_embed(recipe)}
+        if prepared and prepared.data:
+            edit_kwargs["attachments"] = [discord.File(io.BytesIO(prepared.data), filename=prepared.filename)]
+        elif prepared or new_image_url is None:
+            edit_kwargs["attachments"] = []
+
         try:
             save_recipe(recipe, self.thread.id)
 
             starter_message = await self.thread.fetch_message(self.thread.id)
-            await starter_message.edit(embed=create_recipe_embed(recipe))
+            await starter_message.edit(**edit_kwargs)
 
-            await interaction.followup.send("✅ Recipe image updated!", ephemeral=True)
+            message = "✅ Recipe image updated!"
+            if prepared and prepared.data:
+                message += " I saved a copy on the card, so it'll keep showing even if the site moves it."
+            if prepared and prepared.note:
+                message += f"\n⚠️ {prepared.note}"
+            await interaction.followup.send(message, ephemeral=True)
         except (discord.HTTPException, sqlite3.Error) as error:
             await interaction.followup.send(
                 f"❌ I couldn't update this recipe: {error}",

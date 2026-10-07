@@ -67,6 +67,12 @@ def should_use_thumbnail(image_url: str) -> bool:
     except httpx.HTTPError:
         return False
 
+    return dimensions_need_thumbnail(image_data)
+
+
+def dimensions_need_thumbnail(image_data: bytes) -> bool:
+    """Same too-narrow-for-a-banner decision, from image bytes already in
+    hand (e.g. an image about to be attached to the card directly)."""
     dimensions = _image_dimensions(image_data)
     if dimensions is None:
         return False

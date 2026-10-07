@@ -6,6 +6,17 @@ from services.image_layout import should_use_thumbnail
 
 
 RECIPE_BOX_COLOR = 0xA8391F
+ATTACHMENT_PREFIX = "attachment://"
+_THUMBNAIL_MARKER = "-thumb"
+
+
+def mirrored_image_filename(extension: str, thumbnail: bool) -> str:
+    """File name for an image attached to the recipe card message itself.
+    Whether it renders as a thumbnail or a full banner is encoded in the name
+    ("recipe-image-thumb.jpg"), because the DB stores only the
+    `attachment://<name>` reference and create_recipe_embed has to recover the
+    layout from that alone every time the card is rebuilt."""
+    return f"recipe-image{_THUMBNAIL_MARKER if thumbnail else ''}{extension}"
 INGREDIENT_FIELD_LIMIT = 1024
 INSTRUCTIONS_DESCRIPTION_LIMIT = 4096
 
@@ -93,7 +104,14 @@ def create_recipe_embed(recipe: Recipe) -> discord.Embed:
     embed.set_author(name="Rosie's Recipe Box")
 
     if recipe.image_url:
-        if should_use_thumbnail(recipe.image_url):
+        if recipe.image_url.startswith(ATTACHMENT_PREFIX):
+            # Attached to this very message (see /fix_image); layout was
+            # decided at upload time and lives in the file name.
+            if _THUMBNAIL_MARKER in recipe.image_url:
+                embed.set_thumbnail(url=recipe.image_url)
+            else:
+                embed.set_image(url=recipe.image_url)
+        elif should_use_thumbnail(recipe.image_url):
             embed.set_thumbnail(url=recipe.image_url)
         else:
             embed.set_image(url=recipe.image_url)
