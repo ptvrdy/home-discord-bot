@@ -35,7 +35,13 @@ from services.database import (
 )
 from services.forum import HUMAN_TAGS
 from services.google_calendar import HOUSEHOLD_TZ
-from services.grocery_list import _staple_rank, add_items, get_grocery_lists, get_list_items_with_status
+from services.grocery_list import (
+    _staple_rank,
+    add_items,
+    find_existing_locations,
+    get_grocery_lists,
+    get_list_items_with_status,
+)
 from services.grocy import Grocy, GrocyError, GrocyNotConfigured, grocy_configured
 from services.ingredient_match import CONFIDENT_SCORE
 from services.pantry import (
@@ -51,9 +57,14 @@ from services.pantry import (
     plan_put_away,
     put_away,
     recipe_consumption,
+    merge_duplicate,
+    plan_restock,
+    preferred_list,
     relink_tj_item,
     sync_barcode_prices,
     use_soon_text,
+    RESTOCKED_STATE_KEY,
+    USE_SOON_DAYS,
     USE_SOON_STATE_KEY,
 )
 from commands.schedule_commands import refresh_this_week
@@ -178,10 +189,7 @@ class AddToListButton(discord.ui.Button):
             await interaction.followup.send(f"❌ I couldn't connect to OurGroceries: {error}", ephemeral=True)
             return
 
-        preferred = _pantry_list_name()
-        target = next((entry for entry in lists if preferred and entry["name"].lower() == preferred.lower()), None)
-        if target is None and len(lists) == 1:
-            target = lists[0]
+        target = preferred_list(lists, _pantry_list_name())
         if target is None:
             await interaction.followup.send(
                 "Which list?", view=ChooseListView(self.items, lists), ephemeral=True
@@ -555,6 +563,75 @@ class ExpiryActionButton(
         await refresh_this_week_if_stale(interaction.client)
 
 
+class MergeButton(
+    discord.ui.DynamicItem[discord.ui.Button],
+    template=r"pantry:merge:(?P<action>yes|no):(?P<remove_id>\d+):(?P<keep_id>\d+)",
+):
+    """"Is this scanned product the same as one already in the pantry?"
+    Restart-proof like the expiry buttons: the IDs live in the custom_id."""
+
+    def __init__(self, action: str, remove_id: int, keep_id: int, keep_name: str = ""):
+        label = f"🔀 Merge into {keep_name}" if action == "yes" else "Keep separate"
+        super().__init__(
+            discord.ui.Button(
+                label=label[:80],
+                style=discord.ButtonStyle.primary if action == "yes" else discord.ButtonStyle.secondary,
+                custom_id=f"pantry:merge:{action}:{remove_id}:{keep_id}",
+            )
+        )
+        self.action = action
+        self.remove_id = remove_id
+        self.keep_id = keep_id
+
+    @classmethod
+    async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match):
+        return cls(match["action"], int(match["remove_id"]), int(match["keep_id"]))
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        try:
+            async with Grocy() as grocy:
+                names = {int(row["id"]): row["name"] for row in await grocy.get_objects("products")}
+                remove_name, keep_name = names.get(self.remove_id), names.get(self.keep_id)
+                if remove_name is None or keep_name is None:
+                    await interaction.edit_original_response(
+                        content="ℹ️ One of those products is already gone — nothing to merge.", view=None
+                    )
+                    return
+                if self.action == "yes":
+                    await merge_duplicate(grocy, self.remove_id, self.keep_id)
+        except (GrocyError, GrocyNotConfigured) as error:
+            await interaction.followup.send(f"❌ I couldn't merge those: {error}", ephemeral=True)
+            return
+
+        who = interaction.user.display_name
+        if self.action == "yes":
+            content = (
+                f"🔀 Merged **{remove_name}** into **{keep_name}** (by {who}) — its stock moved over, "
+                f"and scanning that package adds to {keep_name} from now on."
+            )
+        else:
+            content = f"👍 Keeping **{remove_name}** separate from **{keep_name}** (by {who})."
+        await interaction.edit_original_response(content=content, view=None)
+        if self.action == "yes":
+            await refresh_this_week_if_stale(interaction.client)
+
+
+class MergeView(discord.ui.View):
+    def __init__(self, suggestion: dict):
+        super().__init__(timeout=None)
+        self.add_item(MergeButton("yes", suggestion["remove_id"], suggestion["keep_id"], suggestion["keep_name"]))
+        self.add_item(MergeButton("no", suggestion["remove_id"], suggestion["keep_id"]))
+
+
+def merge_prompt(suggestion: dict) -> str:
+    return (
+        f"🔀 You scanned **{suggestion['remove_name']}** — is that the same thing as **{suggestion['keep_name']}** "
+        f"in the pantry? Merging moves its stock and barcode onto {suggestion['keep_name']}, "
+        "so the two don't get counted separately."
+    )
+
+
 class ExpiryNudgeView(discord.ui.View):
     def __init__(self, items: list[dict]):
         super().__init__(timeout=None)
@@ -588,23 +665,36 @@ class Pantry(commands.Cog):
 
     @tasks.loop(minutes=ADOPT_SCANNED_MINUTES)
     async def adopt_scanned_task(self):
-        """Pick up products created by scanning in Grocy's own app: link
-        them to TJ's, add the photo/price/shelf life. Local calls only, so
-        a short interval is fine."""
+        """Pantry upkeep every 10 minutes - mostly for things done in Grocy's
+        own app rather than through Rosie. Grocy calls are local, so a short
+        interval is fine; OurGroceries is only touched when something newly
+        runs low.
+
+        1. Link products created by scanning to TJ's (photo, price, shelf
+           life) and ask about any that look like a duplicate
+        2. Fill in TJ's price on purchases saved without one
+        3. Add anything that dropped below its /restock minimum to the list
+        4. Rebuild #this-week if its Use Soon section is out of date"""
         if not grocy_configured():
             return
         try:
             async with Grocy() as grocy:
-                adopted = await adopt_scanned_products(grocy)
+                adoption = await adopt_scanned_products(grocy)
                 filled = await backfill_missing_prices(grocy)
         except GrocyError as error:
-            logger.warning("Adopting scanned products failed: %s", error)
+            logger.warning("Pantry upkeep failed: %s", error)
             return
-        if adopted:
-            logger.info("Linked scanned products to Trader Joe's: %s", ", ".join(adopted))
+        if adoption.adopted:
+            logger.info("Linked scanned products to Trader Joe's: %s", ", ".join(adoption.adopted))
         if filled:
             logger.info("Filled in TJ's price on %d purchase(s) saved without one", filled)
-        # Catches meat bought or used up in Grocy's own app, not via Rosie.
+
+        channel = self._pantry_channel()
+        for suggestion in adoption.merge_suggestions:
+            if channel:
+                await channel.send(merge_prompt(suggestion), view=MergeView(suggestion))
+
+        await self.restock_low_items()
         await refresh_this_week_if_stale(self.bot)
 
     @adopt_scanned_task.before_loop
@@ -616,6 +706,146 @@ class Pantry(commands.Cog):
             return None
         channel = self.bot.get_channel(self.nudges_channel_id)
         return channel if isinstance(channel, discord.abc.Messageable) else None
+
+    def _pantry_channel(self) -> discord.abc.Messageable | None:
+        """#pantry if configured, otherwise #nudges - where pantry questions
+        and notes (merges, restocks) go."""
+        if self.pantry_channel_id is not None:
+            channel = self.bot.get_channel(self.pantry_channel_id)
+            if isinstance(channel, discord.abc.Messageable):
+                return channel
+        return self._nudges_channel()
+
+    # --- auto-restock ---
+
+    async def restock_low_items(self) -> None:
+        """Add anything that just dropped below its /restock minimum to the
+        shopping list, once per dip, skipping what's already on a list.
+        Posts a short note either way. Never raises."""
+        try:
+            async with Grocy() as grocy:
+                volatile = await grocy.get_volatile_stock(due_soon_days=USE_SOON_DAYS)
+        except GrocyError as error:
+            logger.warning("Restock check failed: %s", error)
+            return
+
+        already = {int(value) for value in (get_state(RESTOCKED_STATE_KEY) or "").split(",") if value}
+        new, below = plan_restock(volatile.get("missing_products") or [], already)
+        if not new:
+            set_state(RESTOCKED_STATE_KEY, ",".join(str(product_id) for product_id in sorted(below)))
+            return
+
+        names = [row["name"] for row in new]
+        channel = self._pantry_channel()
+        try:
+            lists = await get_grocery_lists()
+            target = preferred_list(lists, _pantry_list_name())
+            if target is None:
+                if channel:
+                    await channel.send(
+                        f"📉 Running low: {', '.join(f'**{name}**' for name in names)}.",
+                        view=ResultView([], names),
+                    )
+            else:
+                on_a_list = await find_existing_locations(names)
+                to_add = [name for name in names if name.strip().lower() not in on_a_list]
+                if to_add:
+                    await add_items(target["id"], to_add)
+                if channel:
+                    lines = []
+                    if to_add:
+                        lines.append(
+                            f"🛒 Running low: {', '.join(f'**{name}**' for name in to_add)} — added to **{target['name']}**."
+                        )
+                    skipped = [name for name in names if name not in to_add]
+                    if skipped:
+                        lines.append(f"📉 Also low, but already on a list: {', '.join(skipped)}.")
+                    await channel.send("\n".join(lines))
+        except Exception as error:
+            # Leave the remembered set alone, so this dip is retried next pass.
+            logger.warning("Couldn't add low items to OurGroceries: %s", error)
+            return
+        set_state(RESTOCKED_STATE_KEY, ",".join(str(product_id) for product_id in sorted(below)))
+
+    async def _grocy_product_autocomplete(self, interaction: discord.Interaction, current: str):
+        if not grocy_configured():
+            return []
+        try:
+            async with Grocy() as grocy:
+                products = await grocy.get_objects("products")
+        except GrocyError:
+            return []
+        current_lower = current.lower()
+        return [
+            app_commands.Choice(name=row["name"][:100], value=str(row["id"]))
+            for row in sorted(products, key=lambda row: row["name"].lower())
+            if current_lower in row["name"].lower() and str(row.get("active", 1)) != "0"
+        ][:25]
+
+    @app_commands.command(name="restock", description="Auto-add an item to the shopping list when it runs low")
+    @app_commands.describe(
+        product="Pantry item (leave empty to see everything Rosie restocks)",
+        minimum="Add it to the list when you have fewer than this; 0 turns it off",
+    )
+    @app_commands.autocomplete(product=_grocy_product_autocomplete)
+    async def restock(
+        self,
+        interaction: discord.Interaction,
+        product: str | None = None,
+        minimum: app_commands.Range[int, 0, 99] | None = None,
+    ):
+        if not grocy_configured():
+            await interaction.response.send_message(NOT_CONFIGURED_MESSAGE, ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            async with Grocy() as grocy:
+                products = {str(row["id"]): row for row in await grocy.get_objects("products")}
+                state = await load_state(grocy)
+                if product is None:
+                    watched = sorted(
+                        (row for row in products.values() if float(row.get("min_stock_amount") or 0) > 0),
+                        key=lambda row: row["name"].lower(),
+                    )
+                    if not watched:
+                        await interaction.followup.send(
+                            "Nothing's set to restock yet. Try `/restock product: Egg minimum: 4`.", ephemeral=True
+                        )
+                        return
+                    lines = [
+                        f"• **{row['name']}** — below {float(row['min_stock_amount']):g} "
+                        f"(have {state.amount(int(row['id'])):g})"
+                        for row in watched
+                    ]
+                    await interaction.followup.send("🔁 Rosie restocks:\n" + "\n".join(lines), ephemeral=True)
+                    return
+
+                row = products.get(product)
+                if row is None:
+                    await interaction.followup.send("❌ Pick a pantry item from the suggestions.", ephemeral=True)
+                    return
+                if minimum is None:
+                    current = float(row.get("min_stock_amount") or 0)
+                    status = f"restocked below {current:g}" if current else "not restocked automatically"
+                    await interaction.followup.send(f"**{row['name']}** is {status}.", ephemeral=True)
+                    return
+                await grocy.update_object("products", int(row["id"]), {"min_stock_amount": minimum})
+        except GrocyError as error:
+            await interaction.followup.send(f"❌ I couldn't update the pantry: {error}", ephemeral=True)
+            return
+
+        have = state.amount(int(row["id"]))
+        if minimum == 0:
+            message = f"✅ **{row['name']}** won't be added to the list automatically anymore."
+        else:
+            list_name = _pantry_list_name() or "your shopping list"
+            message = (
+                f"✅ Rosie will add **{row['name']}** to **{list_name}** when you're down to fewer than "
+                f"{minimum} (you have {have:g})."
+            )
+            if have < minimum:
+                message += " That's now — it'll be added within 10 minutes."
+        await interaction.followup.send(message, ephemeral=True)
 
     # --- catalog sync ---
 
@@ -630,7 +860,6 @@ class Pantry(commands.Cog):
         if grocy_configured():
             try:
                 async with Grocy() as grocy:
-                    await adopt_scanned_products(grocy)
                     await sync_barcode_prices(grocy)  # today's TJ's price on the Purchase page
             except GrocyError as error:
                 logger.warning("Couldn't refresh pantry prices after the catalog sync: %s", error)
@@ -996,5 +1225,5 @@ class PutAwayNudgeView(discord.ui.View):
 
 
 async def setup(bot):
-    bot.add_dynamic_items(PutAwayNudgeButton, ExpiryActionButton)
+    bot.add_dynamic_items(PutAwayNudgeButton, ExpiryActionButton, MergeButton)
     await bot.add_cog(Pantry(bot))

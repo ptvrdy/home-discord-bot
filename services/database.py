@@ -1389,3 +1389,15 @@ def get_all_recipes(tag: str | None = None, database_path: Path = DATABASE_PATH)
             data["ingredients"] = json.loads(data.pop("ingredients_json"))
             results.append(data)
         return results
+
+def merge_pantry_products(remove_id: int, keep_id: int, database_path: Path = DATABASE_PATH) -> None:
+    """After Grocy merges one product into another: point everything Rosie
+    learned about the removed product at the kept one, and forget the
+    removed product (the kept one's TJ's link wins)."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.execute(
+            "UPDATE pantry_aliases SET grocy_product_id = ? WHERE grocy_product_id = ?",
+            (keep_id, remove_id),
+        )
+        connection.execute("DELETE FROM pantry_products WHERE grocy_product_id = ?", (remove_id,))

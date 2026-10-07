@@ -12,6 +12,10 @@ from commands.pantry_commands import (
     ChooseProductView,
     ExpiryActionButton,
     ExpiryNudgeView,
+    MergeButton,
+    MergeView,
+    Pantry,
+    merge_prompt,
     PutAwayNudgeButton,
     PutAwayNudgeView,
     PutAwayView,
@@ -20,7 +24,7 @@ from commands.pantry_commands import (
     _claim,
     refresh_this_week_if_stale,
 )
-from services.pantry import PutAwayItem
+from services.pantry import RESTOCKED_STATE_KEY, PutAwayItem
 from services.pantry_parser import ADD, CONSUME, PantryAction
 
 
@@ -96,6 +100,67 @@ class PantryViewTests(ViewLimitsMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(labels, ["Milk 0", "Milk 1", "Milk 2", "➕ New: milk", "Cancel"])
         labels = [b["label"] for b in _buttons(ChooseProductView(PantryAction(CONSUME, "milk"), candidates))[1]]
         self.assertNotIn("➕ New: milk", labels)
+
+
+class MergeViewTests(ViewLimitsMixin, unittest.IsolatedAsyncioTestCase):
+    async def test_merge_buttons_are_restart_proof(self):
+        suggestion = {"remove_id": 12, "remove_name": "Pasture Raised Large Brown Eggs", "keep_id": 2, "keep_name": "Egg"}
+        buttons = self.assertSendable(MergeView(suggestion))
+        self.assertEqual([b["label"] for b in buttons], ["🔀 Merge into Egg", "Keep separate"])
+        template = MergeButton.__discord_ui_compiled_template__
+        match = re.fullmatch(template, buttons[0]["custom_id"])
+        rebuilt = await MergeButton.from_custom_id(MagicMock(), MagicMock(), match)
+        self.assertEqual((rebuilt.action, rebuilt.remove_id, rebuilt.keep_id), ("yes", 12, 2))
+        self.assertIn("Pasture Raised Large Brown Eggs", merge_prompt(suggestion))
+
+
+class RestockLowItemsTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.channel = MagicMock()
+        self.channel.send = AsyncMock()
+        self.cog = MagicMock()
+        self.cog._pantry_channel.return_value = self.channel
+        grocy = MagicMock()
+        grocy.__aenter__ = AsyncMock(return_value=grocy)
+        grocy.__aexit__ = AsyncMock(return_value=False)
+        grocy.get_volatile_stock = AsyncMock(return_value={"missing_products": [
+            {"id": 1, "name": "Egg", "amount_missing": 2}, {"id": 2, "name": "Butter", "amount_missing": 1},
+        ]})
+        self.state = {}
+        self.add_items = AsyncMock()
+        self.patches = [
+            patch("commands.pantry_commands.Grocy", return_value=grocy),
+            patch("commands.pantry_commands.get_state", side_effect=lambda key: self.state.get(key)),
+            patch("commands.pantry_commands.set_state", side_effect=lambda key, value: self.state.__setitem__(key, value)),
+            patch("commands.pantry_commands.get_grocery_lists", new=AsyncMock(return_value=[{"id": "tj", "name": "Trader Joe's"}])),
+            patch("commands.pantry_commands.find_existing_locations", new=AsyncMock(return_value={"butter": "Trader Joe's"})),
+            patch("commands.pantry_commands.add_items", new=self.add_items),
+        ]
+        for p in self.patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    async def run_restock(self):
+        await Pantry.restock_low_items(self.cog)
+
+    async def test_adds_new_low_items_not_already_on_a_list(self):
+        await self.run_restock()
+        self.add_items.assert_awaited_once_with("tj", ["Egg"])
+        note = self.channel.send.await_args.args[0]
+        self.assertIn("**Egg** — added to **Trader Joe's**", note)
+        self.assertIn("already on a list: Butter", note)
+        self.assertEqual(self.state[RESTOCKED_STATE_KEY], "1,2")
+
+    async def test_each_dip_is_only_added_once(self):
+        await self.run_restock()
+        await self.run_restock()
+        self.add_items.assert_awaited_once()
+        self.channel.send.assert_awaited_once()
+
+    async def test_failure_is_retried_next_pass(self):
+        self.add_items.side_effect = RuntimeError("OurGroceries down")
+        await self.run_restock()
+        self.assertNotIn(RESTOCKED_STATE_KEY, self.state)
 
 
 class RefreshThisWeekTests(unittest.IsolatedAsyncioTestCase):

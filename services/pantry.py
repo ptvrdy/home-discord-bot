@@ -19,6 +19,7 @@ from services.database import (
     get_pantry_products,
     get_tj_catalog,
     get_tj_product,
+    merge_pantry_products,
     record_pantry_product,
     set_pantry_alias,
 )
@@ -253,7 +254,40 @@ async def relink_tj_item(grocy: Grocy, product_id: int, name: str, sku: str) -> 
 # --- products scanned straight into Grocy ---
 
 
-async def adopt_scanned_products(grocy: Grocy) -> list[str]:
+def _product_category(product: dict, linked_skus: dict[int, str]) -> str | None:
+    """A pantry product's TJ's section: from its linked TJ's item if it has
+    one, otherwise guessed from its name."""
+    sku = linked_skus.get(int(product["id"]))
+    tj_item = get_tj_product(sku) if sku else None
+    if tj_item and tj_item.get("category"):
+        return tj_item["category"]
+    return guess_category(item_words(product["name"]))[0]
+
+
+def find_duplicate(name: str, category: str | None, others: list[dict], category_of) -> dict | None:
+    """An existing pantry product that a newly scanned one is probably the
+    same thing as: "Pasture Raised Large Brown Eggs" -> "Egg". Needs a
+    confident name match (same head noun, the existing name's words all
+    present) AND the same TJ's section, which is what keeps "Crunchy Chili
+    Onion" (a condiment) from matching "Onion" (produce)."""
+    if not category:
+        return None
+    for match in rank_matches(name, others):
+        if match.score < CONFIDENT_SCORE:
+            break
+        if category_of(match.item) == category:
+            return match.item
+    return None
+
+
+@dataclass
+class AdoptResult:
+    adopted: list[str] = field(default_factory=list)
+    # [{"remove_id", "remove_name", "keep_id", "keep_name"}] - to ask about
+    merge_suggestions: list[dict] = field(default_factory=list)
+
+
+async def adopt_scanned_products(grocy: Grocy) -> AdoptResult:
     """Link products that were created by scanning a barcode in Grocy (via
     the Trader Joe's lookup plugin, or Open Food Facts before it) to their
     TJ's item, so they get everything a Rosie-made product has:
@@ -265,9 +299,13 @@ async def adopt_scanned_products(grocy: Grocy) -> list[str]:
       yet (Open Food Facts doesn't set them)
     - recall / "back at TJ's" tracking
 
+    Also flags scanned products that look like a duplicate of an existing
+    one (to ask the household about merging - never merged automatically).
+
     Only products whose barcode is a Trader Joe's-brand one and that Rosie
-    doesn't know yet are touched; each is adopted once. Returns their names."""
-    known = {row["grocy_product_id"] for row in get_pantry_products()}
+    doesn't know yet are touched; each is adopted once."""
+    linked = get_pantry_products()
+    known = {row["grocy_product_id"] for row in linked}
     barcodes = await grocy.get_objects("product_barcodes")
     existing = {row["barcode"] for row in barcodes}
 
@@ -278,12 +316,14 @@ async def adopt_scanned_products(grocy: Grocy) -> list[str]:
         if sku is None or product_id in known:
             continue
         candidates.setdefault(product_id, (sku, []))[1].append(row)
+    result = AdoptResult()
     if not candidates:
-        return []
+        return result
 
     products = {int(row["id"]): row for row in await grocy.get_objects("products")}
+    linked_skus = {row["grocy_product_id"]: row["tj_sku"] for row in linked if row["tj_sku"]}
     setup = await ensure_setup(grocy)
-    adopted = []
+    adopted = result.adopted
     for product_id, (sku, barcode_rows) in candidates.items():
         product = products.get(product_id)
         tj_item = get_tj_product(sku)
@@ -316,7 +356,31 @@ async def adopt_scanned_products(grocy: Grocy) -> list[str]:
         record_pantry_product(product_id, product["name"], sku)
         learn(product["name"], product_id)
         adopted.append(product["name"])
-    return adopted
+        linked_skus[product_id] = sku
+
+        others = [
+            {"id": other_id, "name": other["name"]}
+            for other_id, other in products.items()
+            if other_id != product_id and str(other.get("active", 1)) != "0"
+        ]
+        duplicate = find_duplicate(
+            product["name"], tj_item.get("category"), others,
+            lambda other: _product_category(other, linked_skus),
+        )
+        if duplicate:
+            result.merge_suggestions.append(
+                {"remove_id": product_id, "remove_name": product["name"],
+                 "keep_id": duplicate["id"], "keep_name": duplicate["name"]}
+            )
+    return result
+
+
+async def merge_duplicate(grocy: Grocy, remove_id: int, keep_id: int) -> None:
+    """Fold a duplicate product into the one to keep: Grocy moves its stock,
+    history, and barcodes (so scanning that package adds to the kept product
+    from now on), and Rosie points what she learned at the kept product."""
+    await grocy.merge_products(keep_id, remove_id)
+    merge_pantry_products(remove_id, keep_id)
 
 
 async def backfill_missing_prices(grocy: Grocy) -> int:
@@ -525,6 +589,32 @@ def in_pantry_ingredients(ingredients: list[str], state: PantryState) -> set[str
         if match and match.score >= CONFIDENT_SCORE and state.amount(match.item["id"]) > 0:
             found.add(ingredient.strip().lower())
     return found
+
+
+# --- auto-restock ---
+
+# bot_state key: products already added to the list for being below their
+# minimum, so each dip only adds them once (cleared when they're restocked).
+RESTOCKED_STATE_KEY = "pantry_restocked"
+
+
+def plan_restock(missing: list[dict], already_added: set[int]) -> tuple[list[dict], set[int]]:
+    """From Grocy's below-minimum list, what to newly add to the shopping
+    list, and the set to remember. Products that went back above their
+    minimum drop out of the remembered set, so the next dip adds them again."""
+    below = {int(row["id"]) for row in missing}
+    new = [row for row in missing if int(row["id"]) not in already_added]
+    return new, below
+
+
+def preferred_list(lists: list[dict], preferred_name: str | None) -> dict | None:
+    """The OurGroceries list pantry items go to: PANTRY_LIST_NAME if set
+    (case-insensitive), or the only list if there's just one."""
+    if preferred_name:
+        for entry in lists:
+            if entry["name"].lower() == preferred_name.lower():
+                return entry
+    return lists[0] if len(lists) == 1 else None
 
 
 # bot_state key for the "Use Soon" text #this-week currently shows.

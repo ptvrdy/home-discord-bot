@@ -80,6 +80,7 @@ and how long they keep.
 | `/pantry <update>` | Update the pantry in plain English: *used 4 eggs*, *finished the milk*, *bought bananas and 2 avocados*, *the spinach went bad*, *froze the chicken*, *used some butter* (marks it opened). Typing the same thing in the #pantry channel works too. When something runs out you get a one-tap "add to the list" button; ambiguous items get "did you mean?" buttons, and Rosie remembers your answer. |
 | `/what_can_i_make [tag]` | Ranks your recipes by how much of each is already in stock (pantry staples like salt and oil are assumed), with a boost for recipes that use something about to expire. |
 | `/in_stock` | What's in the pantry right now, plus anything to use soon. |
+| `/restock [item] [minimum]` | Have Rosie add an item to your `PANTRY_LIST_NAME` list automatically when you have fewer than the minimum, e.g. `/restock Egg 4`. She does it once per dip, skips items already on a list, and posts a note in #pantry. Use `0` to stop, or leave everything empty to see what's set. |
 | `/pantry_fix <product> <tj_item>` | Point a pantry item at a different Trader Joe's product when the automatic match was wrong (updates its photo and price). |
 | `/sync_tj_catalog` | Refresh Rosie's copy of the Trader Joe's catalog now. Runs automatically on the 1st of each month and posts a summary (with "back at TJ's" for seasonal items you've bought before) in #nudges. |
 
@@ -87,7 +88,9 @@ Also automatic: `/review` → Made offers to use up the recipe's in-stock ingred
 `/shopping_list`, `/combine_recipes`, and `/meal_plan` start in-stock ingredients unchecked
 "(in pantry)"; #this-week gets a "⏰ Use Soon" section; #nudges gets a 9am "use it or freeze
 it" reminder for meat (and produce, if enabled in `config/shelf_life.py`) and a Monday check
-of FDA recalls against what's in stock.
+of FDA recalls against what's in stock. If something scanned in Grocy looks like the same
+thing as an existing pantry item (TJ's eggs vs. "Egg"), Rosie asks in #pantry whether to
+merge them, so stock isn't split across two products.
 
 ## 📅 Schedule
 

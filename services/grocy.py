@@ -159,6 +159,11 @@ class Grocy:
         body.update(changes)
         await self._request("PUT", f"/stock/entry/{entry['id']}", json=body)
 
+    async def merge_products(self, keep_id: int, remove_id: int) -> None:
+        """Grocy's own merge: moves the removed product's stock, history, and
+        barcodes onto the kept product, then deletes the removed one."""
+        await self._request("POST", f"/stock/products/{keep_id}/merge/{remove_id}")
+
     async def undo_transaction(self, transaction_id: str) -> None:
         await self._request("POST", f"/stock/transactions/{transaction_id}/undo")
 

@@ -14,6 +14,7 @@ from services.database import (
     get_pantry_products,
     get_tj_catalog,
     initialize_database,
+    merge_pantry_products,
     record_og_imported,
     record_pantry_product,
     search_tj_products,
@@ -83,6 +84,17 @@ class PantryDatabaseTests(unittest.TestCase):
         self.assertEqual(get_pantry_aliases(database_path=self.db), {"egg": 42, "brown egg": 42})
         products = get_pantry_products(database_path=self.db)
         self.assertEqual(products[0]["tj_name"], "Organic Large Brown Eggs")
+
+    def test_merge_repoints_aliases_and_forgets_the_removed_product(self):
+        record_pantry_product(2, "Egg", "062124", database_path=self.db)
+        record_pantry_product(12, "Pasture Raised Large Brown Eggs", "062124", database_path=self.db)
+        set_pantry_alias("egg", 2, database_path=self.db)
+        set_pantry_alias("pasture raised brown egg", 12, database_path=self.db)
+
+        merge_pantry_products(12, 2, database_path=self.db)
+
+        self.assertEqual(get_pantry_aliases(database_path=self.db), {"egg": 2, "pasture raised brown egg": 2})
+        self.assertEqual([row["grocy_product_id"] for row in get_pantry_products(database_path=self.db)], [2])
 
     def test_og_imported_round_trip(self):
         now = datetime(2026, 10, 3, 19)

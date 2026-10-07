@@ -165,7 +165,8 @@ class ScannedProductTests(PantryTestCase):
                 patch("services.pantry._attach_picture", new=AsyncMock()) as attach:
             adopted = await pantry.adopt_scanned_products(grocy)
 
-        self.assertEqual(adopted, ["Garlic Butter Nut Mix"])
+        self.assertEqual(adopted.adopted, ["Garlic Butter Nut Mix"])
+        self.assertEqual(adopted.merge_suggestions, [])
         updates = {(call.args[0], call.args[1]): call.args[2] for call in grocy.update_object.await_args_list}
         self.assertEqual(updates[("products", 9)]["location_id"], 30)  # snacks -> Pantry
         self.assertEqual(updates[("products", 9)]["default_best_before_days"], -1)
@@ -190,8 +191,39 @@ class ScannedProductTests(PantryTestCase):
     async def test_known_products_are_left_alone(self):
         grocy = self._grocy_with_scanned_nut_mix()
         with patch("services.pantry.get_pantry_products", return_value=[{"grocy_product_id": 9}]):
-            self.assertEqual(await pantry.adopt_scanned_products(grocy), [])
+            result = await pantry.adopt_scanned_products(grocy)
+        self.assertEqual((result.adopted, result.merge_suggestions), ([], []))
         grocy.update_object.assert_not_awaited()
+
+    async def test_scanned_duplicate_of_a_pantry_product_is_suggested_for_merging(self):
+        grocy = _grocy()
+        eggs_tj = {"sku": "062124", "name": "Pasture Raised Large Brown Eggs", "category": "Dairy & Eggs",
+                   "subcategory": "Eggs", "price": 5.99, "image_url": None}
+        products = [
+            {"id": 2, "name": "Egg", "product_group_id": 1, "picture_file_name": "x.png"},
+            {"id": 12, "name": "Pasture Raised Large Brown Eggs", "product_group_id": 1, "picture_file_name": "y.png"},
+            {"id": 3, "name": "Onion", "product_group_id": 2, "picture_file_name": None},
+        ]
+        barcodes = [{"id": 30, "product_id": 12, "barcode": "00621243", "last_price": 5.99}]
+        grocy.get_objects.side_effect = lambda entity: {
+            "product_barcodes": barcodes, "products": products,
+            "locations": [{"id": 10, "name": "Fridge"}, {"id": 20, "name": "Freezer"}, {"id": 30, "name": "Pantry"}],
+            "quantity_units": [{"id": 2, "name": "Piece"}], "product_groups": [],
+        }[entity]
+        linked = [{"grocy_product_id": 2, "tj_sku": "062124", "name": "Egg"}]
+        with patch("services.pantry.get_pantry_products", return_value=linked), \
+                patch("services.pantry.get_tj_product", return_value=eggs_tj):
+            result = await pantry.adopt_scanned_products(grocy)
+        self.assertEqual(result.merge_suggestions, [
+            {"remove_id": 12, "remove_name": "Pasture Raised Large Brown Eggs", "keep_id": 2, "keep_name": "Egg"},
+        ])
+
+    async def test_merge_duplicate_uses_grocys_merge_and_repoints_rosie(self):
+        grocy = _grocy()
+        with patch("services.pantry.merge_pantry_products") as merge_db:
+            await pantry.merge_duplicate(grocy, remove_id=12, keep_id=2)
+        grocy.merge_products.assert_awaited_once_with(2, 12)
+        merge_db.assert_called_once_with(12, 2)
 
     async def test_backfills_purchases_saved_without_a_price(self):
         grocy = _grocy()
@@ -214,6 +246,43 @@ class ScannedProductTests(PantryTestCase):
             changed = await pantry.sync_barcode_prices(grocy)
         self.assertEqual(changed, 1)
         grocy.update_object.assert_awaited_once_with("product_barcodes", 19, {"last_price": 7.49})
+
+
+class FindDuplicateTests(unittest.TestCase):
+    CATEGORIES = {
+        "Egg": "Dairy & Eggs", "Onion": "Fresh Fruits & Veggies", "Butter": "Dairy & Eggs",
+        "Chicken thigh": "Meat, Seafood & Plant-based",
+    }
+    OTHERS = [{"id": index, "name": name} for index, name in enumerate(CATEGORIES)]
+
+    def find(self, name, category):
+        return pantry.find_duplicate(name, category, self.OTHERS, lambda product: self.CATEGORIES[product["name"]])
+
+    def test_same_thing_in_the_same_section(self):
+        self.assertEqual(self.find("Pasture Raised Large Brown Eggs", "Dairy & Eggs")["name"], "Egg")
+        self.assertEqual(self.find("All Natural Bone-In Skin-On Chicken Thighs", "Meat, Seafood & Plant-based")["name"], "Chicken thigh")
+
+    def test_same_word_but_a_different_section_is_not_a_duplicate(self):
+        # Real scans from this pantry that a name-only match would get wrong.
+        self.assertIsNone(self.find("Crunchy Chili Onion", "Dips, Sauces & Dressings"))
+        self.assertIsNone(self.find("Garlic Butter Nut Mix", "Snacks & Sweets"))
+
+    def test_unknown_section_never_suggests(self):
+        self.assertIsNone(self.find("Pasture Raised Large Brown Eggs", None))
+
+
+class RestockPlanTests(unittest.TestCase):
+    def test_only_new_dips_are_added_and_restocked_items_are_forgotten(self):
+        missing = [{"id": 1, "name": "Egg", "amount_missing": 2}, {"id": 2, "name": "Butter", "amount_missing": 1}]
+        new, below = pantry.plan_restock(missing, already_added={2, 9})
+        self.assertEqual([row["name"] for row in new], ["Egg"])
+        self.assertEqual(below, {1, 2})  # 9 was restocked, so it's forgotten
+
+    def test_preferred_list(self):
+        lists = [{"id": "a", "name": "Trader Joe's"}, {"id": "b", "name": "Costco"}]
+        self.assertEqual(pantry.preferred_list(lists, "trader joe's")["id"], "a")
+        self.assertIsNone(pantry.preferred_list(lists, None))
+        self.assertEqual(pantry.preferred_list(lists[:1], None)["id"], "a")
 
 
 class ApplyActionTests(PantryTestCase):

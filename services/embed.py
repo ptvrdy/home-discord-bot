@@ -236,6 +236,7 @@ HELP_SECTIONS = [
             ("/pantry <update>", "Plain English: \"used 4 eggs, finished the milk\". Or just type in #pantry."),
             ("/what_can_i_make [tag]", "Recipes ranked by what's already in stock."),
             ("/in_stock", "See what's in the pantry and what to use soon."),
+            ("/restock [item] [minimum]", "Auto-add an item to the shopping list when you have fewer than the minimum."),
             ("/pantry_fix", "Point a pantry item at a different Trader Joe's product."),
             ("/sync_tj_catalog", "Refresh the Trader Joe's catalog now (it also runs monthly)."),
         ],
