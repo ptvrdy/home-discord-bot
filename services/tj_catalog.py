@@ -22,7 +22,10 @@ IMAGE_BASE_URL = "https://www.traderjoes.com"
 PAGE_SIZE = 100
 PAGE_DELAY_SECONDS = 1.0
 MAX_PAGES = 60  # safety stop (~6,000 items) in case total_pages is ever wrong
-DEFAULT_STORE_CODE = "701"
+# Downtown Brooklyn (445 Gold St) - this household's store. Union Square
+# (540) has the same catalog and only differs on a few wine prices; TJ's
+# prices do vary by region, so set TJ_STORE_CODE if shopping elsewhere.
+DEFAULT_STORE_CODE = "547"
 
 # Browser-like headers: the endpoint rejects requests without them (403).
 REQUEST_HEADERS = {

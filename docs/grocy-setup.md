@@ -46,7 +46,7 @@ Add to `.env` (or `.env.dev` for a dev bot):
 ```
 GROCY_URL=http://localhost:9283
 GROCY_API_KEY=the-key-from-step-1
-TJ_STORE_CODE=701                 # optional; your store's code (prices are per store)
+TJ_STORE_CODE=547                 # optional; prices vary by store. Default 547 = Downtown Brooklyn
 PANTRY_CHANNEL_ID=123456789012345678   # optional; a #pantry channel for plain-English updates
 PANTRY_LIST_NAME=Trader Joe's     # optional; the OurGroceries list "add to list" uses
 ```
