@@ -129,6 +129,75 @@ class CreateProductTests(PantryTestCase):
         self.assertEqual(product["id"], 99)
 
 
+NUT_MIX = {
+    "sku": "083372", "name": "Garlic Butter Nut Mix", "category": "Snacks & Sweets",
+    "subcategory": "Nuts, Dried Fruits, Seeds", "price": 6.99,
+    "image_url": "https://www.traderjoes.com/content/dam/trjo/products/m21003/83372.png",
+}
+
+
+class ScannedProductTests(PantryTestCase):
+    def _grocy_with_scanned_nut_mix(self, product_overrides=None):
+        grocy = _grocy()
+        product = {"id": 9, "name": "Garlic Butter Nut Mix", "product_group_id": None, "picture_file_name": None,
+                   **(product_overrides or {})}
+        barcodes = [{"id": 19, "product_id": 9, "barcode": "00833721", "last_price": None},
+                    {"id": 20, "product_id": 5, "barcode": "049000050103", "last_price": None}]  # Coca-Cola
+
+        async def get_objects(entity):
+            return {
+                "product_barcodes": barcodes,
+                "products": [product],
+                "locations": [{"id": 10, "name": "Fridge"}, {"id": 20, "name": "Freezer"}, {"id": 30, "name": "Pantry"}],
+                "quantity_units": [{"id": 2, "name": "Piece"}],
+                "product_groups": [],
+            }[entity]
+
+        grocy.get_objects.side_effect = get_objects
+        grocy.create_object.return_value = 77
+        return grocy
+
+    async def test_open_food_facts_product_is_linked_and_filled_in(self):
+        grocy = self._grocy_with_scanned_nut_mix()
+        with patch("services.pantry.get_pantry_products", return_value=[]), \
+                patch("services.pantry.get_tj_product", return_value=NUT_MIX), \
+                patch("services.pantry._attach_picture", new=AsyncMock()) as attach:
+            adopted = await pantry.adopt_scanned_products(grocy)
+
+        self.assertEqual(adopted, ["Garlic Butter Nut Mix"])
+        updates = {(call.args[0], call.args[1]): call.args[2] for call in grocy.update_object.await_args_list}
+        self.assertEqual(updates[("products", 9)]["location_id"], 30)  # snacks -> Pantry
+        self.assertEqual(updates[("products", 9)]["default_best_before_days"], -1)
+        self.assertEqual(updates[("product_barcodes", 19)], {"last_price": 6.99})
+        attach.assert_awaited_once()
+        new_barcodes = [call.args[1]["barcode"] for call in grocy.create_object.await_args_list if call.args[0] == "product_barcodes"]
+        self.assertEqual(new_barcodes, ["000000833721", "0000000833721"])  # not the one already there
+        self.mocks[0].assert_called_once_with(9, "Garlic Butter Nut Mix", "083372")  # record_pantry_product
+
+    async def test_plugin_made_product_keeps_its_settings(self):
+        grocy = self._grocy_with_scanned_nut_mix({"product_group_id": 4, "picture_file_name": "x.png"})
+        with patch("services.pantry.get_pantry_products", return_value=[]), \
+                patch("services.pantry.get_tj_product", return_value=NUT_MIX), \
+                patch("services.pantry._attach_picture", new=AsyncMock()) as attach:
+            await pantry.adopt_scanned_products(grocy)
+        self.assertNotIn(("products", 9), {(c.args[0], c.args[1]) for c in grocy.update_object.await_args_list})
+        attach.assert_not_awaited()
+
+    async def test_known_products_are_left_alone(self):
+        grocy = self._grocy_with_scanned_nut_mix()
+        with patch("services.pantry.get_pantry_products", return_value=[{"grocy_product_id": 9}]):
+            self.assertEqual(await pantry.adopt_scanned_products(grocy), [])
+        grocy.update_object.assert_not_awaited()
+
+    async def test_sync_barcode_prices_only_touches_tjs_barcodes(self):
+        grocy = self._grocy_with_scanned_nut_mix()
+        linked = [{"grocy_product_id": 9, "tj_price": 7.49}, {"grocy_product_id": 5, "tj_price": 1.0}]
+        with patch("services.pantry.get_pantry_products", return_value=linked):
+            changed = await pantry.sync_barcode_prices(grocy)
+        self.assertEqual(changed, 1)
+        grocy.update_object.assert_awaited_once_with("product_barcodes", 19, {"last_price": 7.49})
+
+
 class ApplyActionTests(PantryTestCase):
     async def test_consume_specific_amount(self):
         grocy, state = _grocy(), _state()

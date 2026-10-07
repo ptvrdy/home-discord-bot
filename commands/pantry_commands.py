@@ -40,6 +40,7 @@ from services.grocy import Grocy, GrocyError, GrocyNotConfigured, grocy_configur
 from services.ingredient_match import CONFIDENT_SCORE
 from services.pantry import (
     PantryState,
+    adopt_scanned_products,
     apply_action,
     ensure_setup,
     expiring_items,
@@ -50,6 +51,7 @@ from services.pantry import (
     put_away,
     recipe_consumption,
     relink_tj_item,
+    sync_barcode_prices,
 )
 from services.pantry_embed import build_sync_summary, build_what_can_i_make_embed, format_expiring_lines, score_recipes
 from services.pantry_parser import ADD, CONSUME, CONSUME_ALL, FREEZE, PantryAction, parse_pantry_message
@@ -63,6 +65,7 @@ SHOPPING_CHECK_TIME = time(19, 0, tzinfo=HOUSEHOLD_TZ)
 EXPIRY_CHECK_TIME = time(9, 0, tzinfo=HOUSEHOLD_TZ)
 RECALL_CHECK_TIME = time(10, 0, tzinfo=HOUSEHOLD_TZ)  # checked daily, runs Mondays
 RECALL_CHECK_WEEKDAY = 0
+ADOPT_SCANNED_MINUTES = 10
 
 CATALOG_SYNCED_STATE_KEY = "tj_catalog_synced_at"
 SHOPPING_NUDGE_STATE_KEY = "pantry_shopping_nudge_keys"
@@ -545,12 +548,36 @@ class Pantry(commands.Cog):
         self.shopping_check_task.start()
         self.expiry_check_task.start()
         self.recall_check_task.start()
+        self.adopt_scanned_task.start()
 
     def cog_unload(self):
         self.catalog_sync_task.cancel()
         self.shopping_check_task.cancel()
         self.expiry_check_task.cancel()
         self.recall_check_task.cancel()
+        self.adopt_scanned_task.cancel()
+
+    # --- products scanned straight into Grocy ---
+
+    @tasks.loop(minutes=ADOPT_SCANNED_MINUTES)
+    async def adopt_scanned_task(self):
+        """Pick up products created by scanning in Grocy's own app: link
+        them to TJ's, add the photo/price/shelf life. Local calls only, so
+        a short interval is fine."""
+        if not grocy_configured():
+            return
+        try:
+            async with Grocy() as grocy:
+                adopted = await adopt_scanned_products(grocy)
+        except GrocyError as error:
+            logger.warning("Adopting scanned products failed: %s", error)
+            return
+        if adopted:
+            logger.info("Linked scanned products to Trader Joe's: %s", ", ".join(adopted))
+
+    @adopt_scanned_task.before_loop
+    async def before_adopt_scanned(self):
+        await self.bot.wait_until_ready()
 
     def _nudges_channel(self) -> discord.abc.Messageable | None:
         if self.nudges_channel_id is None:
@@ -567,6 +594,14 @@ class Pantry(commands.Cog):
         now = datetime.now(HOUSEHOLD_TZ)
         stats = upsert_tj_products(rows, now)
         set_state(CATALOG_SYNCED_STATE_KEY, now.isoformat())
+
+        if grocy_configured():
+            try:
+                async with Grocy() as grocy:
+                    await adopt_scanned_products(grocy)
+                    await sync_barcode_prices(grocy)  # today's TJ's price on the Purchase page
+            except GrocyError as error:
+                logger.warning("Couldn't refresh pantry prices after the catalog sync: %s", error)
 
         pantry = get_pantry_products()
         bought_skus = {row["tj_sku"]: row["name"] for row in pantry if row["tj_sku"]}

@@ -73,6 +73,23 @@ registers that product's barcode in Grocy.
   the package. Barcode Buddy works too if you add it later.
 - **Name-brand items** sold at TJ's carry their own barcodes, so they aren't registered.
 
+**Scanning something new.** If you scan a Trader Joe's item that isn't in the pantry yet,
+Grocy offers to look it up. The Grocy folder includes a Trader Joe's lookup plugin
+(`config/data/plugins/TraderJoesBarcodeLookupPlugin.php`) for this:
+- **What it sets:** TJ's name, section, location and shelf life, plus TJ's price on the
+  barcode, so the Purchase page pre-fills it.
+- **Where the data comes from:** Rosie's copy of the catalog, which Grocy reads directly.
+  traderjoes.com blocks Grocy's own requests. So Grocy needs to see Rosie's `data` folder;
+  the Grocy folder's `.env` says where it is on each machine.
+- **Within 10 minutes**, Rosie links the new product to its TJ's item. She adds the photo
+  and the other barcode lengths, and fills in the section and shelf life for anything
+  Open Food Facts created.
+- **Other barcodes** (name-brand items) still go to Open Food Facts, as before.
+- **Keep in sync:** the shelf-life rules in the plugin mirror `config/shelf_life.py`. If you
+  change one, change the other.
+
+After each monthly catalog sync, Rosie also refreshes TJ's price on every linked barcode.
+
 **Shelf lives** live in [`config/shelf_life.py`](../config/shelf_life.py):
 - **Meat and seafood** keep 2–3 days in the fridge and about 4 months frozen.
 - **Produce** has a 5-day default but is **off** until `TRACK_PRODUCE = True`.
@@ -96,8 +113,9 @@ To test without touching the real bot:
 
 ## Moving Grocy to the home server
 
-1. Copy the whole Grocy folder, including `config/`, to the server and run
-   `docker compose up -d` there. To start fresh instead, skip `config/` and redo step 1
+1. Copy the whole Grocy folder, including `config/`, to the server. Edit its `.env` so
+   `ROSIE_DATA_DIR` points at Rosie's `data` folder on the server and `ROSIE_DB_FILE` is
+   `rosies_recipe_box.db`. Then run `docker compose up -d` there. To start fresh instead, skip `config/` and redo step 1
    above.
 2. In the server's `.env`, set `GROCY_URL=http://localhost:9283` and the API key (a new
    one if you started fresh), plus `PANTRY_CHANNEL_ID` etc.

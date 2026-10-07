@@ -111,6 +111,22 @@ def barcodes_for_sku(sku: str) -> list[str]:
     return [ean8, "0000" + ean8, "00000" + ean8]
 
 
+def sku_from_barcode(barcode: str) -> str | None:
+    """The TJ's SKU behind a scanned Trader Joe's-brand barcode (8, 12, or
+    13 digits), or None for anything else - name-brand UPCs, typos, or a bad
+    check digit. The inverse of barcodes_for_sku."""
+    digits = "".join(character for character in barcode if character.isdigit())
+    if len(digits) > 8:
+        if digits[:-8].strip("0"):
+            return None
+        digits = digits[-8:]
+    if len(digits) != 8 or not digits.startswith("00"):
+        return None
+    if _check_digit(digits[:7]) != digits[7]:
+        return None
+    return "0" + digits[2:7]
+
+
 def parse_products(response_json: dict) -> tuple[list[dict], int]:
     """Turn one GraphQL page into catalog rows. Returns (rows, total_pages).
 

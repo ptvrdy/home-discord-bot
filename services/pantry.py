@@ -35,7 +35,7 @@ from services.ingredient_match import (
     rank_matches,
 )
 from services.pantry_parser import ADD, CONSUME_ALL, FREEZE, OPEN, SPOIL, PantryAction
-from services.tj_catalog import barcodes_for_sku, download_image
+from services.tj_catalog import barcodes_for_sku, download_image, sku_from_barcode
 
 logger = logging.getLogger(__name__)
 
@@ -216,11 +216,13 @@ async def _attach_picture(grocy: Grocy, product_id: int, tj_item: dict) -> None:
         logger.warning("Couldn't attach a picture to product %s: %s", product_id, error)
 
 
-async def _register_barcodes(grocy: Grocy, product_id: int, sku: str) -> None:
+async def _register_barcodes(grocy: Grocy, product_id: int, sku: str, existing: set[str] | None = None) -> None:
     """Let Grocy's own barcode scanning (its mobile web UI, Barcode Buddy)
     recognize the TJ's package. Best-effort: a barcode already registered
-    to another product is left alone."""
+    (here or to another product) is left alone."""
     for barcode in barcodes_for_sku(sku):
+        if existing and barcode in existing:
+            continue
         try:
             await grocy.create_object("product_barcodes", {"product_id": product_id, "barcode": barcode})
         except GrocyError as error:
@@ -235,6 +237,91 @@ async def relink_tj_item(grocy: Grocy, product_id: int, name: str, sku: str) -> 
     if tj_item and tj_item.get("image_url"):
         await _attach_picture(grocy, product_id, tj_item)
     await _register_barcodes(grocy, product_id, sku)
+
+
+# --- products scanned straight into Grocy ---
+
+
+async def adopt_scanned_products(grocy: Grocy) -> list[str]:
+    """Link products that were created by scanning a barcode in Grocy (via
+    the Trader Joe's lookup plugin, or Open Food Facts before it) to their
+    TJ's item, so they get everything a Rosie-made product has:
+
+    - the TJ's photo (traderjoes.com blocks Grocy's own downloads)
+    - the other lengths of the same barcode, so any scanner app matches
+    - TJ's price on the barcode, for the Purchase page
+    - a section, home location, and shelf life, if the product has none
+      yet (Open Food Facts doesn't set them)
+    - recall / "back at TJ's" tracking
+
+    Only products whose barcode is a Trader Joe's-brand one and that Rosie
+    doesn't know yet are touched; each is adopted once. Returns their names."""
+    known = {row["grocy_product_id"] for row in get_pantry_products()}
+    barcodes = await grocy.get_objects("product_barcodes")
+    existing = {row["barcode"] for row in barcodes}
+
+    candidates: dict[int, tuple[str, list[dict]]] = {}
+    for row in barcodes:
+        product_id = int(row["product_id"])
+        sku = sku_from_barcode(row["barcode"])
+        if sku is None or product_id in known:
+            continue
+        candidates.setdefault(product_id, (sku, []))[1].append(row)
+    if not candidates:
+        return []
+
+    products = {int(row["id"]): row for row in await grocy.get_objects("products")}
+    setup = await ensure_setup(grocy)
+    adopted = []
+    for product_id, (sku, barcode_rows) in candidates.items():
+        product = products.get(product_id)
+        tj_item = get_tj_product(sku)
+        if product is None or tj_item is None:
+            continue
+
+        try:
+            if not product.get("product_group_id"):
+                rule = shelf_life_for(tj_item.get("category"), tj_item.get("subcategory"))
+                update = {
+                    "location_id": setup["locations"][rule["location"]],
+                    "default_best_before_days": rule["days"],
+                    "default_best_before_days_after_freezing": rule["freezer_days"],
+                    "default_best_before_days_after_thawing": 1 if rule["days"] != NEVER_EXPIRES else 0,
+                }
+                group_id = await _group_id(grocy, setup, tj_item.get("category"))
+                if group_id is not None:
+                    update["product_group_id"] = group_id
+                await grocy.update_object("products", product_id, update)
+            if not product.get("picture_file_name") and tj_item.get("image_url"):
+                await _attach_picture(grocy, product_id, tj_item)
+            await _register_barcodes(grocy, product_id, sku, existing)
+            if tj_item.get("price") is not None:
+                for row in barcode_rows:
+                    if not row.get("last_price"):
+                        await grocy.update_object("product_barcodes", int(row["id"]), {"last_price": tj_item["price"]})
+        except GrocyError as error:
+            logger.warning("Couldn't fully adopt scanned product %s: %s", product_id, error)
+
+        record_pantry_product(product_id, product["name"], sku)
+        learn(product["name"], product_id)
+        adopted.append(product["name"])
+    return adopted
+
+
+async def sync_barcode_prices(grocy: Grocy) -> int:
+    """After a catalog sync: put each linked product's current TJ's price on
+    its Trader Joe's barcodes, so the Purchase page pre-fills today's price.
+    Returns how many barcodes changed."""
+    prices = {row["grocy_product_id"]: row["tj_price"] for row in get_pantry_products() if row["tj_price"] is not None}
+    changed = 0
+    for row in await grocy.get_objects("product_barcodes"):
+        price = prices.get(int(row["product_id"]))
+        if price is None or sku_from_barcode(row["barcode"]) is None:
+            continue
+        if row.get("last_price") is None or abs(float(row["last_price"]) - price) > 0.001:
+            await grocy.update_object("product_barcodes", int(row["id"]), {"last_price": price})
+            changed += 1
+    return changed
 
 
 # --- put-away (OurGroceries crossed-off -> stock) ---

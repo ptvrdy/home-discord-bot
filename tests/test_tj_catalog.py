@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from services.tj_catalog import barcodes_for_sku, fetch_catalog, parse_products
+from services.tj_catalog import barcodes_for_sku, fetch_catalog, parse_products, sku_from_barcode
 
 
 class BarcodeTests(unittest.TestCase):
@@ -21,6 +21,23 @@ class BarcodeTests(unittest.TestCase):
 
     def test_bad_sku(self):
         self.assertEqual(barcodes_for_sku("12"), [])
+
+    def test_sku_from_scanned_barcodes(self):
+        # 00833721 was scanned off a real Garlic Butter Nut Mix package.
+        for scanned in ("00833721", "000000833721", "0000000833721"):
+            self.assertEqual(sku_from_barcode(scanned), "083372", scanned)
+        self.assertEqual(sku_from_barcode("00521482"), "052148")
+
+    def test_round_trip(self):
+        for sku in ("052148", "083372", "090570", "001590"):
+            for barcode in barcodes_for_sku(sku):
+                self.assertEqual(sku_from_barcode(barcode), sku)
+
+    def test_rejects_name_brand_and_mistyped_codes(self):
+        self.assertIsNone(sku_from_barcode("049000050103"))  # Coca-Cola UPC-A
+        self.assertIsNone(sku_from_barcode("00833722"))  # wrong check digit
+        self.assertIsNone(sku_from_barcode("12833721"))  # not a TJ's "00" prefix
+        self.assertIsNone(sku_from_barcode("abc"))
 
 
 def _page(items, current_page=1, total_pages=1):
