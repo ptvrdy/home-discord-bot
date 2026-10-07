@@ -53,6 +53,24 @@ class GrocyClientTests(unittest.IsolatedAsyncioTestCase):
         async with _grocy(handler) as grocy:
             self.assertIsNone(await grocy.undo_transaction("abc"))
 
+    async def test_edit_stock_entry_keeps_the_other_fields(self):
+        seen = {}
+
+        def handler(request):
+            seen["url"] = str(request.url)
+            seen["method"] = request.method
+            seen["body"] = json.loads(request.content)
+            return httpx.Response(200, json=[{"transaction_id": "x"}])
+
+        entry = {"id": 13, "product_id": 11, "amount": 1, "price": 0, "best_before_date": "2026-10-10",
+                 "open": 0, "location_id": 2, "purchased_date": "2026-10-07", "stock_id": "abc"}
+        async with _grocy(handler) as grocy:
+            await grocy.edit_stock_entry(entry, price=4.49)
+
+        self.assertEqual((seen["method"], seen["url"]), ("PUT", "http://grocy.test/api/stock/entry/13"))
+        self.assertEqual(seen["body"], {"amount": 1, "best_before_date": "2026-10-10", "price": 4.49,
+                                        "open": 0, "location_id": 2, "purchased_date": "2026-10-07"})
+
     async def test_picture_upload_encodes_file_name(self):
         seen = {}
 

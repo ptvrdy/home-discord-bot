@@ -42,6 +42,7 @@ from services.pantry import (
     PantryState,
     adopt_scanned_products,
     apply_action,
+    backfill_missing_prices,
     ensure_setup,
     expiring_items,
     in_pantry_ingredients,
@@ -569,11 +570,14 @@ class Pantry(commands.Cog):
         try:
             async with Grocy() as grocy:
                 adopted = await adopt_scanned_products(grocy)
+                filled = await backfill_missing_prices(grocy)
         except GrocyError as error:
             logger.warning("Adopting scanned products failed: %s", error)
             return
         if adopted:
             logger.info("Linked scanned products to Trader Joe's: %s", ", ".join(adopted))
+        if filled:
+            logger.info("Filled in TJ's price on %d purchase(s) saved without one", filled)
 
     @adopt_scanned_task.before_loop
     async def before_adopt_scanned(self):

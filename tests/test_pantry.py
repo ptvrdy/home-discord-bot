@@ -92,8 +92,9 @@ class CreateProductTests(PantryTestCase):
         self.assertEqual(product, {"id": 99, "name": "Ground beef", "location_id": 10})
         calls = {call.args[0]: call.args[1] for call in grocy.create_object.await_args_list}
         data = calls["products"]
-        barcodes = [call.args[1]["barcode"] for call in grocy.create_object.await_args_list if call.args[0] == "product_barcodes"]
-        self.assertEqual(barcodes, ["00521482", "000000521482", "0000000521482"])
+        barcodes = [call.args[1] for call in grocy.create_object.await_args_list if call.args[0] == "product_barcodes"]
+        self.assertEqual([row["barcode"] for row in barcodes], ["00521482", "000000521482", "0000000521482"])
+        self.assertEqual({row["last_price"] for row in barcodes}, {6.49})
         self.assertEqual(data["default_best_before_days"], 3)
         self.assertEqual(data["default_best_before_days_after_freezing"], 120)
         self.assertEqual(data["product_group_id"], 7)
@@ -170,8 +171,11 @@ class ScannedProductTests(PantryTestCase):
         self.assertEqual(updates[("products", 9)]["default_best_before_days"], -1)
         self.assertEqual(updates[("product_barcodes", 19)], {"last_price": 6.99})
         attach.assert_awaited_once()
-        new_barcodes = [call.args[1]["barcode"] for call in grocy.create_object.await_args_list if call.args[0] == "product_barcodes"]
-        self.assertEqual(new_barcodes, ["000000833721", "0000000833721"])  # not the one already there
+        new_barcodes = [call.args[1] for call in grocy.create_object.await_args_list if call.args[0] == "product_barcodes"]
+        self.assertEqual(  # not the one already there, and priced
+            [(row["barcode"], row["last_price"]) for row in new_barcodes],
+            [("000000833721", 6.99), ("0000000833721", 6.99)],
+        )
         self.mocks[0].assert_called_once_with(9, "Garlic Butter Nut Mix", "083372")  # record_pantry_product
 
     async def test_plugin_made_product_keeps_its_settings(self):
@@ -188,6 +192,20 @@ class ScannedProductTests(PantryTestCase):
         with patch("services.pantry.get_pantry_products", return_value=[{"grocy_product_id": 9}]):
             self.assertEqual(await pantry.adopt_scanned_products(grocy), [])
         grocy.update_object.assert_not_awaited()
+
+    async def test_backfills_purchases_saved_without_a_price(self):
+        grocy = _grocy()
+        stock = [
+            {"id": 13, "product_id": 11, "amount": 1, "price": 0, "best_before_date": "2999-12-31",
+             "open": 0, "location_id": 30, "purchased_date": "2026-10-07"},
+            {"id": 14, "product_id": 11, "amount": 1, "price": 4.49},  # already priced
+            {"id": 15, "product_id": 12, "amount": 2, "price": None},   # not a TJ's-linked product
+        ]
+        grocy.get_objects.side_effect = lambda entity: {"stock": stock}[entity]
+        with patch("services.pantry.get_pantry_products", return_value=[{"grocy_product_id": 11, "tj_price": 4.49}]):
+            filled = await pantry.backfill_missing_prices(grocy)
+        self.assertEqual(filled, 1)
+        grocy.edit_stock_entry.assert_awaited_once_with(stock[0], price=4.49)
 
     async def test_sync_barcode_prices_only_touches_tjs_barcodes(self):
         grocy = self._grocy_with_scanned_nut_mix()

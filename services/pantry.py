@@ -190,7 +190,7 @@ async def create_product(
     if tj_item and tj_item.get("image_url"):
         await _attach_picture(grocy, product_id, tj_item)
     if tj_item:
-        await _register_barcodes(grocy, product_id, tj_item["sku"])
+        await _register_barcodes(grocy, product_id, tj_item["sku"], price=tj_item.get("price"))
 
     record_pantry_product(product_id, name, tj_item["sku"] if tj_item else None)
     learn(text, product_id, created_by)
@@ -216,15 +216,25 @@ async def _attach_picture(grocy: Grocy, product_id: int, tj_item: dict) -> None:
         logger.warning("Couldn't attach a picture to product %s: %s", product_id, error)
 
 
-async def _register_barcodes(grocy: Grocy, product_id: int, sku: str, existing: set[str] | None = None) -> None:
+async def _register_barcodes(
+    grocy: Grocy,
+    product_id: int,
+    sku: str,
+    existing: set[str] | None = None,
+    price: float | None = None,
+) -> None:
     """Let Grocy's own barcode scanning (its mobile web UI, Barcode Buddy)
-    recognize the TJ's package. Best-effort: a barcode already registered
+    recognize the TJ's package, with TJ's price on each barcode so the
+    Purchase page pre-fills it. Best-effort: a barcode already registered
     (here or to another product) is left alone."""
     for barcode in barcodes_for_sku(sku):
         if existing and barcode in existing:
             continue
+        data = {"product_id": product_id, "barcode": barcode}
+        if price is not None:
+            data["last_price"] = price
         try:
-            await grocy.create_object("product_barcodes", {"product_id": product_id, "barcode": barcode})
+            await grocy.create_object("product_barcodes", data)
         except GrocyError as error:
             logger.info("Skipping barcode %s for product %s: %s", barcode, product_id, error)
 
@@ -236,7 +246,7 @@ async def relink_tj_item(grocy: Grocy, product_id: int, name: str, sku: str) -> 
     record_pantry_product(product_id, name, sku)
     if tj_item and tj_item.get("image_url"):
         await _attach_picture(grocy, product_id, tj_item)
-    await _register_barcodes(grocy, product_id, sku)
+    await _register_barcodes(grocy, product_id, sku, price=tj_item.get("price") if tj_item else None)
 
 
 # --- products scanned straight into Grocy ---
@@ -294,7 +304,7 @@ async def adopt_scanned_products(grocy: Grocy) -> list[str]:
                 await grocy.update_object("products", product_id, update)
             if not product.get("picture_file_name") and tj_item.get("image_url"):
                 await _attach_picture(grocy, product_id, tj_item)
-            await _register_barcodes(grocy, product_id, sku, existing)
+            await _register_barcodes(grocy, product_id, sku, existing, price=tj_item.get("price"))
             if tj_item.get("price") is not None:
                 for row in barcode_rows:
                     if not row.get("last_price"):
@@ -306,6 +316,23 @@ async def adopt_scanned_products(grocy: Grocy) -> list[str]:
         learn(product["name"], product_id)
         adopted.append(product["name"])
     return adopted
+
+
+async def backfill_missing_prices(grocy: Grocy) -> int:
+    """Fill in TJ's price on stock entries of TJ's-linked products that were
+    saved with no price (or $0). The first purchase right after a scan is
+    the usual case: Grocy's Purchase page only pre-fills the price when the
+    product is entered by barcode, and right after creating a product it
+    selects it by name instead. Returns how many entries were filled in."""
+    prices = {row["grocy_product_id"]: row["tj_price"] for row in get_pantry_products() if row["tj_price"]}
+    filled = 0
+    for entry in await grocy.get_objects("stock"):
+        price = prices.get(int(entry["product_id"]))
+        if price is None or (entry.get("price") is not None and float(entry["price"]) > 0):
+            continue
+        await grocy.edit_stock_entry(entry, price=price)
+        filled += 1
+    return filled
 
 
 async def sync_barcode_prices(grocy: Grocy) -> int:

@@ -149,6 +149,16 @@ class Grocy:
         )
         return _transaction_id(result)
 
+    async def edit_stock_entry(self, entry: dict, **changes) -> None:
+        """Change fields of one stock entry (a row from get_objects("stock")),
+        resending its other editable fields unchanged."""
+        body = {
+            key: entry.get(key)
+            for key in ("amount", "best_before_date", "price", "open", "location_id", "purchased_date")
+        }
+        body.update(changes)
+        await self._request("PUT", f"/stock/entry/{entry['id']}", json=body)
+
     async def undo_transaction(self, transaction_id: str) -> None:
         await self._request("POST", f"/stock/transactions/{transaction_id}/undo")
 
