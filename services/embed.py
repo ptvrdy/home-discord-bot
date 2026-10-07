@@ -212,6 +212,17 @@ HELP_SECTIONS = [
         ],
     ),
     (
+        "🥫 Pantry",
+        [
+            ("/put_away", "Add what you crossed off in OurGroceries to the pantry - uncheck anything you didn't buy."),
+            ("/pantry <update>", "Plain English: \"used 4 eggs, finished the milk\". Or just type in #pantry."),
+            ("/what_can_i_make [tag]", "Recipes ranked by what's already in stock."),
+            ("/in_stock", "See what's in the pantry and what to use soon."),
+            ("/pantry_fix", "Point a pantry item at a different Trader Joe's product."),
+            ("/sync_tj_catalog", "Refresh the Trader Joe's catalog now (it also runs monthly)."),
+        ],
+    ),
+    (
         "📅 Schedule",
         [
             ("/task <request>", 'Schedule a quick one-off task, e.g. "call vet", "call vet today at 5pm", or "call vet next monday at 5pm". Proposes a free slot to confirm unless you gave an exact time; a day that already passed this week rolls to its upcoming occurrence.'),
@@ -229,17 +240,6 @@ HELP_SECTIONS = [
     (
         "⚙️ Admin",
         [
-    (
-        "🥫 Pantry",
-        [
-            ("/put_away", "Add what you crossed off in OurGroceries to the pantry - uncheck anything you didn't buy."),
-            ("/pantry <update>", "Plain English: \"used 4 eggs, finished the milk\". Or just type in #pantry."),
-            ("/what_can_i_make [tag]", "Recipes ranked by what's already in stock."),
-            ("/in_stock", "See what's in the pantry and what to use soon."),
-            ("/pantry_fix", "Point a pantry item at a different Trader Joe's product."),
-            ("/sync_tj_catalog", "Refresh the Trader Joe's catalog now (it also runs monthly)."),
-        ],
-    ),
             ("/check_setup", "Verify every configured tag actually matches a tag on the forum."),
             ("/check_calendar_setup", "Verify the Google service account can reach each configured calendar."),
             ("/backup_now", "Manually back up the database instead of waiting for the automatic daily 3am backup."),

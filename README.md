@@ -353,8 +353,6 @@ OURGROCERIES_PASSWORD=your-ourgroceries-password
 ```
 `/shopping_list` fails gracefully with a clear message if these aren't set.
 
-## Project layout
-
 ## Pantry (Grocy + Trader Joe's)
 
 Optional pantry inventory, backed by a self-hosted [Grocy](https://grocy.info) that you
@@ -374,6 +372,8 @@ almost never have to open, with Rosie as the interface.
 Setup, configuration and moving servers: [`docs/grocy-setup.md`](docs/grocy-setup.md).
 Commands: [`docs/commands.md`](docs/commands.md#-pantry).
 
+## Project layout
+
 ```
 bot.py                     Entry point: loads the cogs, syncs slash commands, initializes the DB
 
@@ -382,10 +382,10 @@ commands/
     chore_commands.py      /done + the background nudge scheduler
     schedule_commands.py   Calendar diagnostics, the #this-week refresh loop, and
                             the /task and /week scheduling flows
-
-models/
     pantry_commands.py     Pantry: /put_away, #pantry messages, /what_can_i_make, catalog
                             sync, use-soon nudges, recall checks
+
+models/
     recipe_card.py         Recipe dataclass — the shape every recipe takes regardless of source
 
 services/
@@ -405,8 +405,6 @@ services/
     image_layout.py          Decides thumbnail vs. full-size image based on aspect ratio
     time_parser.py           Parses "PT1H30M" / "2 hours" / "20" into minutes
     database.py              SQLite schema, migrations, and all persistence
-
-config/
     grocy.py                 Grocy REST API client
     tj_catalog.py            Trader Joe's catalog fetch/parse
     ingredient_match.py      Pure text -> pantry product / TJ's item matching
@@ -414,13 +412,15 @@ config/
     pantry.py                Pantry operations (Grocy + catalog + matching)
     pantry_embed.py          Pure recipe scoring and pantry message formatting
     recalls.py               openFDA recall lookups + matching against stock
+
+config/
     discord_tags.py          Maps logical tag keys to Discord forum tag names/emoji
     recipe_keywords.py       Include/exclude keyword rules per tag
     chores.py                Default chores and their nudge thresholds
     waste_schedule.py        Weekly trash/recycling/compost pickup days
+    shelf_life.py            Pantry storage location + shelf life per TJ's category
 
 tests/                       Unit tests (unittest) for the services above
-    shelf_life.py            Pantry storage location + shelf life per TJ's category
 ```
 
 ## Setup
