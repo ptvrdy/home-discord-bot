@@ -1,0 +1,25 @@
+# Run the unit tests on every push and pull request, so a breaking change
+# shows up on GitHub before it's pulled onto the home server. The tests are
+# offline (temp SQLite, mocked Discord/Grocy/OurGroceries), so no secrets.
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.14 = the dev PC; 3.12 = in case the home server's Python is older.
+        python-version: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m unittest discover tests -v
