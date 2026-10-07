@@ -1,7 +1,13 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from services.tj_catalog import barcodes_for_sku, fetch_catalog, parse_products, sku_from_barcode
+from services.tj_catalog import (
+    barcodes_for_sku,
+    download_product_photo,
+    fetch_catalog,
+    parse_products,
+    sku_from_barcode,
+)
 
 
 class BarcodeTests(unittest.TestCase):
@@ -108,6 +114,17 @@ class ParseProductsTests(unittest.TestCase):
         self.assertEqual(parse_products({}), ([], 0))
         rows, _ = parse_products(_page([{"sku": "1", "item_title": "Mystery", "retail_price": None}]))
         self.assertIsNone(rows[0]["price"])
+
+
+class ProductPhotoTests(unittest.IsolatedAsyncioTestCase):
+    async def test_prefers_the_small_rendition(self):
+        with patch("services.tj_catalog.download_image", new=AsyncMock(side_effect=[b"small", b"big"])) as download:
+            self.assertEqual(await download_product_photo("https://tj/p/1.png"), b"small")
+        download.assert_awaited_once_with("https://tj/p/1.png/jcr:content/renditions/cq5dam.thumbnail.319.319.png")
+
+    async def test_falls_back_to_the_original(self):
+        with patch("services.tj_catalog.download_image", new=AsyncMock(side_effect=[None, b"big"])):
+            self.assertEqual(await download_product_photo("https://tj/p/1.png"), b"big")
 
 
 class FetchCatalogTests(unittest.IsolatedAsyncioTestCase):

@@ -51,7 +51,7 @@ class PantryTestCase(unittest.IsolatedAsyncioTestCase):
             patch("services.pantry.set_pantry_alias"),
             patch("services.pantry.get_tj_product", return_value=None),
             patch("services.pantry.get_tj_catalog", return_value=[]),
-            patch("services.pantry.download_image", new=AsyncMock(return_value=None)),
+            patch("services.pantry.download_product_photo", new=AsyncMock(return_value=None)),
         ]
         self.mocks = [p.start() for p in patches]
         for p in patches:
@@ -246,6 +246,19 @@ class ScannedProductTests(PantryTestCase):
             changed = await pantry.sync_barcode_prices(grocy)
         self.assertEqual(changed, 1)
         grocy.update_object.assert_awaited_once_with("product_barcodes", 19, {"last_price": 7.49})
+
+
+class PictureTests(PantryTestCase):
+    async def test_existing_picture_file_is_replaced(self):
+        from services.grocy import GrocyError
+
+        grocy = _grocy()
+        grocy.upload_product_picture.side_effect = [GrocyError("Error while creating file tj-1.png"), None]
+        with patch("services.pantry.download_product_photo", new=AsyncMock(return_value=b"\x89PNG small")):
+            await pantry._attach_picture(grocy, 5, {"sku": "1", "image_url": "https://tj/p/1.png"})
+        grocy.delete_product_picture.assert_awaited_once_with("tj-1.png")
+        self.assertEqual(grocy.upload_product_picture.await_count, 2)
+        grocy.update_object.assert_awaited_once_with("products", 5, {"picture_file_name": "tj-1.png"})
 
 
 class FindDuplicateTests(unittest.TestCase):

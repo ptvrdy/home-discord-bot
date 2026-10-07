@@ -37,7 +37,7 @@ from services.ingredient_match import (
 )
 from services.pantry_embed import expiring_field_value
 from services.pantry_parser import ADD, CONSUME_ALL, FREEZE, OPEN, SPOIL, PantryAction
-from services.tj_catalog import barcodes_for_sku, download_image, sku_from_barcode
+from services.tj_catalog import barcodes_for_sku, download_product_photo, sku_from_barcode
 
 logger = logging.getLogger(__name__)
 
@@ -206,13 +206,21 @@ async def create_product(
 
 
 async def _attach_picture(grocy: Grocy, product_id: int, tj_item: dict) -> None:
-    content = await download_image(tj_item["image_url"])
+    content = await download_product_photo(tj_item["image_url"])
     if not content:
         return
-    extension = tj_item["image_url"].rsplit(".", 1)[-1].lower()
+    # Small renditions are always PNG; the original fallback keeps its type.
+    is_png = content.startswith(b"\x89PNG")
+    extension = "png" if is_png else tj_item["image_url"].rsplit(".", 1)[-1].lower()
     file_name = f"tj-{tj_item['sku']}.{extension if extension in {'png', 'jpg', 'jpeg', 'webp'} else 'png'}"
     try:
-        await grocy.upload_product_picture(file_name, content)
+        try:
+            await grocy.upload_product_picture(file_name, content)
+        except GrocyError:
+            # Grocy won't overwrite a file that already exists (e.g. the
+            # same TJ's item picked again with /pantry_fix) - replace it.
+            await grocy.delete_product_picture(file_name)
+            await grocy.upload_product_picture(file_name, content)
         await grocy.update_object("products", product_id, {"picture_file_name": file_name})
     except GrocyError as error:
         logger.warning("Couldn't attach a picture to product %s: %s", product_id, error)

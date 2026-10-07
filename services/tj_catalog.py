@@ -198,6 +198,19 @@ async def fetch_catalog(client: httpx.AsyncClient | None = None) -> list[dict]:
             await client.aclose()
 
 
+def thumbnail_url(url: str) -> str:
+    """TJ's image server (Adobe AEM) keeps a 319x319 rendition of every
+    product photo - ~175 KB instead of a ~4.5 MB original, and about the
+    size Grocy shows them at anyway."""
+    return f"{url}/jcr:content/renditions/cq5dam.thumbnail.319.319.png"
+
+
+async def download_product_photo(url: str) -> bytes | None:
+    """The small rendition of a TJ's product photo, or the original if the
+    small one doesn't exist. None if neither downloads."""
+    return await download_image(thumbnail_url(url)) or await download_image(url)
+
+
 async def download_image(url: str, client: httpx.AsyncClient | None = None) -> bytes | None:
     """Best-effort product photo download; None on any failure (a missing
     photo should never block creating a pantry product)."""

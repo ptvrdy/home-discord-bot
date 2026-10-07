@@ -96,6 +96,10 @@ class Grocy:
             headers={"Content-Type": "application/octet-stream"},
         )
 
+    async def delete_product_picture(self, file_name: str) -> None:
+        encoded = base64.b64encode(file_name.encode()).decode()
+        await self._request("DELETE", f"/files/productpictures/{encoded}")
+
     # --- stock ---
 
     async def get_stock(self) -> list[dict]:
