@@ -2,7 +2,9 @@ import unittest
 from datetime import date
 
 from services.pantry_embed import (
+    autocomplete_order,
     build_sync_summary,
+    chunk_lines,
     build_what_can_i_make_embed,
     expiring_field_value,
     score_recipes,
@@ -68,6 +70,33 @@ class ExpiringFieldTests(unittest.TestCase):
 
     def test_nothing_expiring(self):
         self.assertIsNone(expiring_field_value([], date(2026, 10, 3)))
+
+
+class ChunkLinesTests(unittest.TestCase):
+    def test_a_whole_pantry_splits_into_messages_without_losing_or_cutting_lines(self):
+        lines = [f"• Pantry item number {index} ×{index}" for index in range(400)]
+        chunks = chunk_lines(lines)
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(len(chunk) <= 2000 for chunk in chunks))
+        self.assertEqual("\n".join(chunks).split("\n"), lines)
+
+    def test_short_list_is_one_message(self):
+        self.assertEqual(chunk_lines(["a", "b"]), ["a\nb"])
+        self.assertEqual(chunk_lines([]), [])
+
+
+class AutocompleteOrderTests(unittest.TestCase):
+    def test_prefix_matches_first_and_capped_at_25(self):
+        rows = [{"name": name} for name in ["Eggplant Dip", "Egg", "Brown Eggs", "Scrambled egg bites"]]
+        rows += [{"name": f"Egg thing {index:03}"} for index in range(40)]
+        ordered = [row["name"] for row in autocomplete_order(rows, "egg")]
+        self.assertEqual(len(ordered), 25)
+        self.assertEqual(ordered[0], "Egg")
+        self.assertNotIn("Brown Eggs", ordered)  # 25 better matches came first
+
+    def test_word_start_beats_middle_of_word(self):
+        rows = [{"name": "Veggie Burger"}, {"name": "Scrambled Egg Bites"}]
+        self.assertEqual([row["name"] for row in autocomplete_order(rows, "egg")], ["Scrambled Egg Bites", "Veggie Burger"])
 
 
 class SyncSummaryTests(unittest.TestCase):

@@ -68,7 +68,14 @@ from services.pantry import (
     USE_SOON_STATE_KEY,
 )
 from commands.schedule_commands import refresh_this_week
-from services.pantry_embed import build_sync_summary, build_what_can_i_make_embed, format_expiring_lines, score_recipes
+from services.pantry_embed import (
+    autocomplete_order,
+    build_sync_summary,
+    build_what_can_i_make_embed,
+    chunk_lines,
+    format_expiring_lines,
+    score_recipes,
+)
 from services.pantry_parser import ADD, CONSUME, CONSUME_ALL, FREEZE, PantryAction, parse_pantry_message
 from services.recalls import fetch_recent_recalls, format_recall_alert, match_recalls
 from services.tj_catalog import fetch_catalog
@@ -742,10 +749,13 @@ class Pantry(commands.Cog):
             target = preferred_list(lists, _pantry_list_name())
             if target is None:
                 if channel:
-                    await channel.send(
-                        f"📉 Running low: {', '.join(f'**{name}**' for name in names)}.",
-                        view=ResultView([], names),
-                    )
+                    chunks = chunk_lines(["📉 Running low:"] + [f"• **{name}**" for name in names])
+                    for index, chunk in enumerate(chunks):
+                        is_last = index == len(chunks) - 1
+                        if is_last:
+                            await channel.send(chunk, view=ResultView([], names))
+                        else:
+                            await channel.send(chunk)
             else:
                 on_a_list = await find_existing_locations(names)
                 to_add = [name for name in names if name.strip().lower() not in on_a_list]
@@ -754,13 +764,14 @@ class Pantry(commands.Cog):
                 if channel:
                     lines = []
                     if to_add:
-                        lines.append(
-                            f"🛒 Running low: {', '.join(f'**{name}**' for name in to_add)} — added to **{target['name']}**."
-                        )
+                        lines.append(f"🛒 Running low — added to **{target['name']}**:")
+                        lines += [f"• **{name}**" for name in to_add]
                     skipped = [name for name in names if name not in to_add]
                     if skipped:
-                        lines.append(f"📉 Also low, but already on a list: {', '.join(skipped)}.")
-                    await channel.send("\n".join(lines))
+                        lines.append("📉 Also low, but already on a list:")
+                        lines += [f"• {name}" for name in skipped]
+                    for chunk in chunk_lines(lines):
+                        await channel.send(chunk)
         except Exception as error:
             # Leave the remembered set alone, so this dip is retried next pass.
             logger.warning("Couldn't add low items to OurGroceries: %s", error)
@@ -775,12 +786,11 @@ class Pantry(commands.Cog):
                 products = await grocy.get_objects("products")
         except GrocyError:
             return []
-        current_lower = current.lower()
+        active = [row for row in products if str(row.get("active", 1)) != "0"]
         return [
             app_commands.Choice(name=row["name"][:100], value=str(row["id"]))
-            for row in sorted(products, key=lambda row: row["name"].lower())
-            if current_lower in row["name"].lower() and str(row.get("active", 1)) != "0"
-        ][:25]
+            for row in autocomplete_order(active, current)
+        ]
 
     @app_commands.command(name="restock", description="Auto-add an item to the shopping list when it runs low")
     @app_commands.describe(
@@ -817,7 +827,8 @@ class Pantry(commands.Cog):
                         f"(have {state.amount(int(row['id'])):g})"
                         for row in watched
                     ]
-                    await interaction.followup.send("🔁 Rosie restocks:\n" + "\n".join(lines), ephemeral=True)
+                    for chunk in chunk_lines([f"🔁 Rosie restocks {len(watched)} item(s):"] + lines):
+                        await interaction.followup.send(chunk, ephemeral=True)
                     return
 
                 row = products.get(product)
@@ -1061,8 +1072,8 @@ class Pantry(commands.Cog):
         expiring = expiring_items(volatile)
         if expiring:
             lines += ["", "**Use soon:**"] + format_expiring_lines(expiring, datetime.now(HOUSEHOLD_TZ).date())
-        text = "\n".join(lines)
-        await interaction.followup.send(text[:1990], ephemeral=True)
+        for chunk in chunk_lines(lines):
+            await interaction.followup.send(chunk, ephemeral=True)
 
     @app_commands.command(name="what_can_i_make", description="Recipes ranked by what's already in the pantry")
     @app_commands.describe(tag="Optional: only recipes with this tag")
@@ -1089,13 +1100,10 @@ class Pantry(commands.Cog):
     # --- fixing matches ---
 
     async def _product_autocomplete(self, interaction: discord.Interaction, current: str):
-        rows = get_pantry_products()
-        current_lower = current.lower()
         return [
             app_commands.Choice(name=row["name"][:100], value=str(row["grocy_product_id"]))
-            for row in rows
-            if current_lower in row["name"].lower()
-        ][:25]
+            for row in autocomplete_order(get_pantry_products(), current)
+        ]
 
     async def _tj_autocomplete(self, interaction: discord.Interaction, current: str):
         return [

@@ -147,9 +147,25 @@ class RestockLowItemsTests(unittest.IsolatedAsyncioTestCase):
         await self.run_restock()
         self.add_items.assert_awaited_once_with("tj", ["Egg"])
         note = self.channel.send.await_args.args[0]
-        self.assertIn("**Egg** — added to **Trader Joe's**", note)
-        self.assertIn("already on a list: Butter", note)
+        self.assertEqual(
+            note,
+            "🛒 Running low — added to **Trader Joe's**:\n• **Egg**\n📉 Also low, but already on a list:\n• Butter",
+        )
         self.assertEqual(self.state[RESTOCKED_STATE_KEY], "1,2")
+
+    async def test_a_huge_dip_is_split_across_messages(self):
+        missing = [{"id": index, "name": f"Pantry staple number {index}", "amount_missing": 1} for index in range(300)]
+        with patch("commands.pantry_commands.Grocy") as grocy_class, \
+                patch("commands.pantry_commands.find_existing_locations", new=AsyncMock(return_value={})):
+            grocy = grocy_class.return_value
+            grocy.__aenter__ = AsyncMock(return_value=grocy)
+            grocy.__aexit__ = AsyncMock(return_value=False)
+            grocy.get_volatile_stock = AsyncMock(return_value={"missing_products": missing})
+            await self.run_restock()
+        messages = [call.args[0] for call in self.channel.send.await_args_list]
+        self.assertGreater(len(messages), 1)
+        self.assertTrue(all(len(message) <= 2000 for message in messages))
+        self.assertEqual(sum(message.count("• **") for message in messages), 300)
 
     async def test_each_dip_is_only_added_once(self):
         await self.run_restock()

@@ -15,8 +15,53 @@ EXPIRING_BONUS = 0.15
 FIELD_LIMIT = 1024
 
 
+MESSAGE_LIMIT = 2000
+
+
 def _truncate(text: str, limit: int = FIELD_LIMIT) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+AUTOCOMPLETE_LIMIT = 25
+
+
+def autocomplete_order(rows: list[dict], typed: str, name_key: str = "name") -> list[dict]:
+    """Rows whose name contains what's typed, best first: names starting
+    with it, then names with a word starting with it, then the rest -
+    alphabetical within each. Capped at Discord's 25 suggestions; typing
+    more narrows it, so any size of pantry is reachable."""
+    typed = typed.strip().lower()
+
+    def rank(row):
+        name = row[name_key].lower()
+        if name.startswith(typed):
+            return 0
+        if any(word.startswith(typed) for word in name.split()):
+            return 1
+        return 2
+
+    matches = [row for row in rows if typed in row[name_key].lower()]
+    return sorted(matches, key=lambda row: (rank(row), row[name_key].lower()))[:AUTOCOMPLETE_LIMIT]
+
+
+def chunk_lines(lines: list[str], limit: int = MESSAGE_LIMIT) -> list[str]:
+    """Split a list of lines into as few Discord messages as possible,
+    breaking only between lines - so a whole pantry's worth of items is
+    sent as several messages instead of erroring or being cut off. (A single
+    line longer than the limit, which pantry lines never are, gets trimmed.)"""
+    chunks: list[str] = []
+    current = ""
+    for line in lines:
+        line = _truncate(line, limit)
+        candidate = f"{current}\n{line}" if current else line
+        if len(candidate) > limit:
+            chunks.append(current)
+            current = line
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 def score_recipes(
