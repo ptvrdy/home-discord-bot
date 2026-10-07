@@ -34,6 +34,7 @@ from services.ingredient_match import (
     parse_quantity,
     rank_matches,
 )
+from services.pantry_embed import expiring_field_value
 from services.pantry_parser import ADD, CONSUME_ALL, FREEZE, OPEN, SPOIL, PantryAction
 from services.tj_catalog import barcodes_for_sku, download_image, sku_from_barcode
 
@@ -524,6 +525,18 @@ def in_pantry_ingredients(ingredients: list[str], state: PantryState) -> set[str
         if match and match.score >= CONFIDENT_SCORE and state.amount(match.item["id"]) > 0:
             found.add(ingredient.strip().lower())
     return found
+
+
+# bot_state key for the "Use Soon" text #this-week currently shows.
+USE_SOON_STATE_KEY = "this_week_use_soon"
+USE_SOON_DAYS = 3
+
+
+async def use_soon_text(grocy: Grocy, today) -> str | None:
+    """The #this-week "Use Soon" field as it should read right now (None
+    if nothing's expiring)."""
+    volatile = await grocy.get_volatile_stock(due_soon_days=USE_SOON_DAYS)
+    return expiring_field_value(expiring_items(volatile), today)
 
 
 def expiring_items(volatile: dict, products_by_id: dict[int, dict] | None = None) -> list[dict]:

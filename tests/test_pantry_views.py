@@ -5,7 +5,7 @@ the way discord.py would send it. Discord rejects a message outright for
 
 import re
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from commands.pantry_commands import (
     AddToListButton,
@@ -18,6 +18,7 @@ from commands.pantry_commands import (
     RecipeConsumeView,
     ResultView,
     _claim,
+    refresh_this_week_if_stale,
 )
 from services.pantry import PutAwayItem
 from services.pantry_parser import ADD, CONSUME, PantryAction
@@ -95,6 +96,45 @@ class PantryViewTests(ViewLimitsMixin, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(labels, ["Milk 0", "Milk 1", "Milk 2", "➕ New: milk", "Cancel"])
         labels = [b["label"] for b in _buttons(ChooseProductView(PantryAction(CONSUME, "milk"), candidates))[1]]
         self.assertNotIn("➕ New: milk", labels)
+
+
+class RefreshThisWeekTests(unittest.IsolatedAsyncioTestCase):
+    def _patches(self, current, shown):
+        grocy = MagicMock()
+        grocy.__aenter__ = AsyncMock(return_value=grocy)
+        grocy.__aexit__ = AsyncMock(return_value=False)
+        return [
+            patch.dict("os.environ", {"THIS_WEEK_CHANNEL_ID": "1", "GROCY_URL": "http://g", "GROCY_API_KEY": "k"}),
+            patch("commands.pantry_commands.Grocy", return_value=grocy),
+            patch("commands.pantry_commands.use_soon_text", new=AsyncMock(return_value=current)),
+            patch("commands.pantry_commands.get_state", return_value=shown),
+            patch("commands.pantry_commands.refresh_this_week", new=AsyncMock()),
+        ]
+
+    async def _run(self, current, shown, refresh_side_effect=None):
+        patches = self._patches(current, shown)
+        mocks = [p.start() for p in patches]
+        self.addCleanup(lambda: [p.stop() for p in patches])
+        refresh = mocks[-1]
+        refresh.side_effect = refresh_side_effect
+        await refresh_this_week_if_stale(MagicMock())
+        return refresh
+
+    async def test_rebuilds_when_use_soon_changed(self):
+        refresh = await self._run("🟠 Ground beef — tomorrow", "")
+        refresh.assert_awaited_once()
+
+    async def test_leaves_it_alone_when_nothing_changed(self):
+        refresh = await self._run("🟠 Ground beef — tomorrow", "🟠 Ground beef — tomorrow")
+        refresh.assert_not_awaited()
+
+    async def test_nothing_expiring_and_never_shown(self):
+        refresh = await self._run(None, None)
+        refresh.assert_not_awaited()
+
+    async def test_never_raises(self):
+        refresh = await self._run("🟠 Ground beef — tomorrow", "", refresh_side_effect=RuntimeError("discord down"))
+        refresh.assert_awaited_once()
 
 
 class ClaimTests(unittest.IsolatedAsyncioTestCase):

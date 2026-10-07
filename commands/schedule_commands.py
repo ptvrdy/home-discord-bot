@@ -44,8 +44,7 @@ from services.schedule import (
     resolve_day,
 )
 from services.grocy import Grocy, GrocyError, grocy_configured
-from services.pantry import expiring_items
-from services.pantry_embed import expiring_field_value
+from services.pantry import USE_SOON_STATE_KEY, use_soon_text
 from services.this_week_embed import build_this_week_embed
 
 
@@ -113,10 +112,11 @@ async def refresh_this_week(bot: commands.Bot) -> None:
     if grocy_configured():
         try:
             async with Grocy() as grocy:
-                volatile = await grocy.get_volatile_stock(due_soon_days=3)
-            use_soon = expiring_field_value(expiring_items(volatile), now.date())
+                use_soon = await use_soon_text(grocy, now.date())
         except GrocyError:
             pass  # the pantry being down shouldn't break #this-week
+    # Remembered so pantry changes can tell whether #this-week is out of date.
+    set_state(USE_SOON_STATE_KEY, use_soon or "")
 
     embed = build_this_week_embed(
         monday,

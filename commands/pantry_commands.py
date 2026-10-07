@@ -53,7 +53,10 @@ from services.pantry import (
     recipe_consumption,
     relink_tj_item,
     sync_barcode_prices,
+    use_soon_text,
+    USE_SOON_STATE_KEY,
 )
+from commands.schedule_commands import refresh_this_week
 from services.pantry_embed import build_sync_summary, build_what_can_i_make_embed, format_expiring_lines, score_recipes
 from services.pantry_parser import ADD, CONSUME, CONSUME_ALL, FREEZE, PantryAction, parse_pantry_message
 from services.recalls import fetch_recent_recalls, format_recall_alert, match_recalls
@@ -105,6 +108,24 @@ async def _undo_all(transaction_ids: list[str]) -> None:
             await grocy.undo_transaction(transaction_id)
 
 
+async def refresh_this_week_if_stale(bot: commands.Bot) -> None:
+    """Rebuild #this-week when its "Use Soon" section no longer matches the
+    pantry - after a put-away, a #pantry message, a button, or (via the
+    10-minute pass) something bought by scanning in Grocy directly. A no-op
+    when nothing changed, so it doesn't rebuild on every pantry action.
+    Never raises: a stale #this-week isn't worth failing a reply over."""
+    if not os.getenv("THIS_WEEK_CHANNEL_ID") or not grocy_configured():
+        return
+    try:
+        async with Grocy() as grocy:
+            current = await use_soon_text(grocy, datetime.now(HOUSEHOLD_TZ).date())
+        if (current or "") == (get_state(USE_SOON_STATE_KEY) or ""):
+            return
+        await refresh_this_week(bot)
+    except Exception as error:
+        logger.warning("Couldn't refresh #this-week after a pantry change: %s", error)
+
+
 async def _claim(view: discord.ui.View, interaction: discord.Interaction) -> bool:
     """Make a confirm/undo button fire once. A quick double-tap would
     otherwise put everything away (or use it up) twice before the first
@@ -138,6 +159,7 @@ class UndoPantryButton(discord.ui.Button):
         # Put-away undo: offer these list items again next time.
         forget_og_imported(self.og_item_ids)
         await interaction.edit_original_response(content="↩️ Undone — the pantry is back the way it was.", view=None)
+        await refresh_this_week_if_stale(interaction.client)
 
 
 class AddToListButton(discord.ui.Button):
@@ -288,6 +310,7 @@ class ConfirmPutAwayButton(discord.ui.Button):
             content="🧺 Put away:\n" + "\n".join(result.lines),
             view=ResultView(result.transactions, og_item_ids=[item.og_item_id for item in result.done]),
         )
+        await refresh_this_week_if_stale(interaction.client)
 
 
 class PutAwayView(discord.ui.View):
@@ -337,6 +360,7 @@ class ConfirmConsumeButton(discord.ui.Button):
         await interaction.edit_original_response(
             content="\n".join(lines), view=ResultView(transactions, ran_out)
         )
+        await refresh_this_week_if_stale(interaction.client)
 
 
 class RecipeConsumeView(discord.ui.View):
@@ -415,6 +439,7 @@ class ChooseProductButton(discord.ui.Button):
             content=result.line,
             view=ResultView([result.transaction_id] if result.transaction_id else [], [result.ran_out] if result.ran_out else None),
         )
+        await refresh_this_week_if_stale(interaction.client)
 
 
 class ChooseProductView(discord.ui.View):
@@ -527,6 +552,7 @@ class ExpiryActionButton(
                 child.disabled = True
         await interaction.message.edit(view=view)
         await interaction.followup.send(f"{result.line} (by {interaction.user.display_name})")
+        await refresh_this_week_if_stale(interaction.client)
 
 
 class ExpiryNudgeView(discord.ui.View):
@@ -578,6 +604,8 @@ class Pantry(commands.Cog):
             logger.info("Linked scanned products to Trader Joe's: %s", ", ".join(adopted))
         if filled:
             logger.info("Filled in TJ's price on %d purchase(s) saved without one", filled)
+        # Catches meat bought or used up in Grocy's own app, not via Rosie.
+        await refresh_this_week_if_stale(self.bot)
 
     @adopt_scanned_task.before_loop
     async def before_adopt_scanned(self):
@@ -757,6 +785,7 @@ class Pantry(commands.Cog):
                 await message.reply(content, view=view, mention_author=False)
             else:
                 await message.reply(content, mention_author=False)
+        await refresh_this_week_if_stale(self.bot)
 
     @app_commands.command(name="pantry", description='Update the pantry in plain English, e.g. "used 4 eggs, finished the milk"')
     @app_commands.describe(update="What happened - used, finished, bought, tossed, froze...")
@@ -775,6 +804,7 @@ class Pantry(commands.Cog):
                 await interaction.followup.send(content, view=view)
             else:
                 await interaction.followup.send(content)
+        await refresh_this_week_if_stale(self.bot)
 
     # --- what's in stock / what can I make ---
 
