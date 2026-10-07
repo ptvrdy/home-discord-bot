@@ -1,0 +1,59 @@
+# Grocy - the pantry inventory behind Rosie's /put_away, #pantry, /restock, etc.
+# Same file on Windows (Docker Desktop) and the Linux home server:
+#   cd grocy && docker compose up -d
+# Grocy's data lives in ./config and nightly backups in ./backups - both
+# git-ignored, like the per-machine .env (see .env.example).
+services:
+  grocy:
+    image: lscr.io/linuxserver/grocy:latest
+    container_name: grocy
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+      - GROCY_CURRENCY=USD
+      - GROCY_DEFAULT_LOCALE=en
+      # Rosie (Discord) already does chores, tasks, calendar, recipes, meal planning, and
+      # OurGroceries owns the shopping list - hide all of that so Grocy is just a pantry.
+      - GROCY_FEATURE_FLAG_CHORES=false
+      - GROCY_FEATURE_FLAG_TASKS=false
+      - GROCY_FEATURE_FLAG_BATTERIES=false
+      - GROCY_FEATURE_FLAG_EQUIPMENT=false
+      - GROCY_FEATURE_FLAG_CALENDAR=false
+      - GROCY_FEATURE_FLAG_RECIPES=false
+      - GROCY_FEATURE_FLAG_SHOPPINGLIST=false
+      - GROCY_FEATURE_FLAG_STOCK_PRICE_TRACKING=true
+      - GROCY_FEATURE_FLAG_STOCK_LOCATION_TRACKING=true
+      - GROCY_FEATURE_FLAG_STOCK_BEST_BEFORE_DATE_TRACKING=true
+      - GROCY_FEATURE_FLAG_STOCK_PRODUCT_FREEZING=true
+      # Scanning an unknown barcode in Grocy: Trader Joe's-brand items are looked
+      # up in Rosie's copy of the TJ's catalog (name, price, shelf life); anything
+      # else uses Open Food Facts. See plugins/TraderJoesBarcodeLookupPlugin.php.
+      - GROCY_STOCK_BARCODE_LOOKUP_PLUGIN=TraderJoesBarcodeLookupPlugin
+      - ROSIE_DB=/rosie/${ROSIE_DB_FILE:-rosies_recipe_box.db}
+    volumes:
+      - ./config:/config
+      - ./plugins/TraderJoesBarcodeLookupPlugin.php:/config/data/plugins/TraderJoesBarcodeLookupPlugin.php:ro
+      # Rosie's data folder (this repo's data/), read-only, for the TJ's catalog.
+      - ${ROSIE_DATA_DIR:-../data}:/rosie:ro
+    ports:
+      - "9283:80"
+    restart: unless-stopped
+
+  # Nightly backup of Grocy's database + product photos into ./backups (newest
+  # 14 kept). Runs once on startup too. Restore steps are in README.md.
+  grocy-backup:
+    image: alpine:3.20
+    container_name: grocy-backup
+    environment:
+      - TZ=America/New_York
+    volumes:
+      - ./config:/config:ro
+      - ./backups:/backups
+      - ./backup.sh:/backup.sh:ro
+    command: >
+      sh -c "apk add --no-cache sqlite tzdata > /dev/null
+      && echo '30 3 * * * sh /backup.sh' | crontab -
+      && sh /backup.sh
+      && crond -f -l 8"
+    restart: unless-stopped

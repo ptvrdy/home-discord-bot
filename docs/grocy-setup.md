@@ -16,15 +16,15 @@ missing and every other part of Rosie works as before.
 
 ## 1. Run Grocy
 
-Grocy runs from its own folder outside this repo, alongside its data. On the dev PC
-that's `Desktop\Scripts\grocy`, which holds a `docker-compose.yml` and a short
-`SETUP.md`. The compose file:
+Grocy runs from this repo's [`grocy/`](../grocy/README.md) folder. Its compose file:
 - uses the `lscr.io/linuxserver/grocy` image on port **9283**;
-- stores everything in `./config`;
+- keeps Grocy's data in `grocy/config/` (git-ignored);
 - turns off the Grocy features Rosie or OurGroceries already cover: chores, tasks,
-  calendar, recipes, meal plan and shopping list.
+  calendar, recipes, meal plan and shopping list;
+- adds the Trader Joe's barcode plugin and a nightly backup.
 
 ```
+cd grocy
 docker compose up -d
 ```
 
@@ -74,13 +74,13 @@ registers that product's barcode in Grocy.
 - **Name-brand items** sold at TJ's carry their own barcodes, so they aren't registered.
 
 **Scanning something new.** If you scan a Trader Joe's item that isn't in the pantry yet,
-Grocy offers to look it up. The Grocy folder includes a Trader Joe's lookup plugin
-(`config/data/plugins/TraderJoesBarcodeLookupPlugin.php`) for this:
+Grocy offers to look it up. The `grocy/` folder includes a Trader Joe's lookup plugin
+(`grocy/plugins/TraderJoesBarcodeLookupPlugin.php`) for this:
 - **What it sets:** TJ's name, section, location and shelf life, plus TJ's price on the
   barcode, so the Purchase page pre-fills it.
 - **Where the data comes from:** Rosie's copy of the catalog, which Grocy reads directly.
-  traderjoes.com blocks Grocy's own requests. So Grocy needs to see Rosie's `data` folder;
-  the Grocy folder's `.env` says where it is on each machine.
+  traderjoes.com blocks Grocy's own requests. Grocy reads this repo's `data/` folder,
+  read-only; `grocy/.env` can point elsewhere (see `grocy/.env.example`).
 - **Within 10 minutes**, Rosie links the new product to its TJ's item. She adds the photo
   and the other barcode lengths, and fills in the section and shelf life for anything
   Open Food Facts created.
@@ -111,19 +111,20 @@ To test without touching the real bot:
 3. Run `ROSIE_ENV_FILE=.env.dev python bot.py`. In PowerShell:
    `$env:ROSIE_ENV_FILE=".env.dev"; python bot.py`.
 
-## Moving Grocy to the home server
+## Setting it up on the home server
 
-1. Copy the whole Grocy folder, including `config/`, to the server. Edit its `.env` so
-   `ROSIE_DATA_DIR` points at Rosie's `data` folder on the server and `ROSIE_DB_FILE` is
-   `rosies_recipe_box.db`. Then run `docker compose up -d` there. To start fresh instead, skip `config/` and redo step 1
-   above.
-2. In the server's `.env`, set `GROCY_URL=http://localhost:9283` and the API key (a new
-   one if you started fresh), plus `PANTRY_CHANNEL_ID` etc.
-3. Pull and restart Rosie as usual. The new database tables are created automatically on
-   startup.
-   - **Database:** if you started Grocy fresh, the pantry tables in Rosie's database will
-     be empty too. That's expected, because the catalog re-syncs and aliases are
-     relearned as you use it.
-   - **Moving Grocy data:** if you kept Grocy's data, copy the dev bot's
-     `pantry_aliases` and `pantry_products` rows as well, so Rosie's links keep pointing
-     at the right Grocy products.
+Starting fresh on the server is simplest. Rosie's production database has no pantry data
+yet, so a new Grocy and Rosie start out matching.
+
+1. On the server, `git pull`, then `cd grocy && docker compose up -d`. The defaults already
+   point at Rosie's `data/rosies_recipe_box.db`, so no `.env` is needed.
+2. In Grocy (`http://<server>:9283`): log in as admin/admin, change the password and
+   create an API key.
+3. In Rosie's `.env`, add `GROCY_URL=http://localhost:9283`, the API key,
+   `PANTRY_CHANNEL_ID` and `PANTRY_LIST_NAME`. Then restart Rosie; her new database tables
+   are created automatically.
+4. Run `/sync_tj_catalog` in Discord.
+
+(To keep a dev Grocy's data instead, copy its `grocy/config/` over before step 1. Also copy
+the dev database's `pantry_aliases` and `pantry_products` rows into Rosie's, so her links
+point at the right Grocy products.)

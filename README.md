@@ -375,6 +375,8 @@ almost never have to open, with Rosie as the interface.
   recall check against what's in stock.
 
 Setup, configuration and moving servers: [`docs/grocy-setup.md`](docs/grocy-setup.md).
+Grocy itself (Docker compose, Trader Joe's barcode plugin, nightly backups) lives in
+[`grocy/`](grocy/README.md).
 Commands: [`docs/commands.md`](docs/commands.md#-pantry).
 
 ## Project layout

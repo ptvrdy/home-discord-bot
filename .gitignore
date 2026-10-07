@@ -7,3 +7,6 @@ data/backups/
 .vscode/
 google-service-account.json
 update-bot-instructions.txt
+grocy/config/
+grocy/backups/
+grocy/.env
