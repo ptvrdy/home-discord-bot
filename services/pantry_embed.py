@@ -148,6 +148,33 @@ def build_what_can_i_make_embed(scored: list[dict], tag: str | None = None) -> d
     return embed
 
 
+COOK_THIS_WEEK_LIMIT = 3
+COOK_THIS_WEEK_MIN_SHARE = 0.6
+
+
+def cook_this_week_field_value(scored: list[dict]) -> str | None:
+    """#this-week's "Cook This Week" section: up to 3 recipes from the box
+    worth making now - mostly in stock (60%+ of the non-staple ingredients)
+    or using something about to expire, which score_recipes already ranks
+    first. None when nothing qualifies, so the section stays out of the way."""
+    picks = [
+        result for result in scored
+        if result["uses_expiring"] or result["have"] / result["total"] >= COOK_THIS_WEEK_MIN_SHARE
+    ][:COOK_THIS_WEEK_LIMIT]
+    if not picks:
+        return None
+
+    lines = []
+    for result in picks:
+        name = f"<#{result['discord_thread_id']}>" if result.get("discord_thread_id") else f"**{result['title']}**"
+        detail = "have everything" if not result["missing"] else f"have {result['have']}/{result['total']}"
+        line = f"• {name} — {detail}"
+        if result["uses_expiring"]:
+            line += f" · ⏰ uses {', '.join(result['uses_expiring'])}"
+        lines.append(line)
+    return _truncate("\n".join(lines))
+
+
 def _days_label(best_before: str | None, today: date) -> str:
     if not best_before:
         return ""

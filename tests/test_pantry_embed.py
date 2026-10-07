@@ -5,6 +5,7 @@ from services.pantry_embed import (
     autocomplete_order,
     build_sync_summary,
     chunk_lines,
+    cook_this_week_field_value,
     build_what_can_i_make_embed,
     expiring_field_value,
     score_recipes,
@@ -54,6 +55,34 @@ class ScoreRecipesTests(unittest.TestCase):
 
     def test_empty_embed(self):
         self.assertIn("/put_away", build_what_can_i_make_embed([]).description)
+
+
+def _scored(title, thread, have, total, missing=(), uses_expiring=()):
+    return {"title": title, "discord_thread_id": thread, "score": have / total, "have": have,
+            "total": total, "missing": list(missing), "uses_expiring": list(uses_expiring)}
+
+
+class CookThisWeekTests(unittest.TestCase):
+    def test_picks_mostly_in_stock_or_expiring_recipes_up_to_three(self):
+        scored = [
+            _scored("Shawarma", 1, 4, 5, ["lemon"], ["Chicken thigh"]),
+            _scored("Omelet", 2, 3, 3),
+            _scored("Tacos", 3, 2, 3, ["salsa"]),
+            _scored("Pad Thai", 4, 2, 3, ["peanut"]),
+            _scored("Stew", 5, 1, 4, ["carrot", "potato", "beef"]),  # only 25% in stock
+        ]
+        self.assertEqual(
+            cook_this_week_field_value(scored),
+            "• <#1> — have 4/5 · ⏰ uses Chicken thigh\n• <#2> — have everything\n• <#3> — have 2/3",
+        )
+
+    def test_a_low_coverage_recipe_still_counts_if_it_uses_something_expiring(self):
+        value = cook_this_week_field_value([_scored("Stew", 5, 1, 4, ["a", "b", "c"], ["Ground beef"])])
+        self.assertEqual(value, "• <#5> — have 1/4 · ⏰ uses Ground beef")
+
+    def test_nothing_worth_suggesting(self):
+        self.assertIsNone(cook_this_week_field_value([_scored("Stew", 5, 1, 4, ["a", "b", "c"])]))
+        self.assertIsNone(cook_this_week_field_value([]))
 
 
 class ExpiringFieldTests(unittest.TestCase):

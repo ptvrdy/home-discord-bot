@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 from config.shelf_life import FREEZER, FRIDGE, NEVER_EXPIRES, PANTRY, guess_category, rules_for_export, shelf_life_for
 from services.database import (
+    get_all_recipes,
     get_pantry_aliases,
     get_pantry_products,
     get_tj_catalog,
@@ -37,7 +38,7 @@ from services.ingredient_match import (
     parse_quantity,
     rank_matches,
 )
-from services.pantry_embed import expiring_field_value
+from services.pantry_embed import cook_this_week_field_value, expiring_field_value, score_recipes
 from services.pantry_parser import ADD, CONSUME_ALL, FREEZE, OPEN, SPOIL, PantryAction
 from services.tj_catalog import barcodes_for_sku, download_product_photo, sku_from_barcode
 
@@ -640,16 +641,37 @@ def preferred_list(lists: list[dict], preferred_name: str | None) -> dict | None
     return lists[0] if len(lists) == 1 else None
 
 
-# bot_state key for the "Use Soon" text #this-week currently shows.
-USE_SOON_STATE_KEY = "this_week_use_soon"
+# bot_state key for the pantry sections #this-week currently shows (their
+# combined text), so a pantry change can tell if #this-week is out of date.
+THIS_WEEK_PANTRY_STATE_KEY = "this_week_pantry"
 USE_SOON_DAYS = 3
 
 
-async def use_soon_text(grocy: Grocy, today) -> str | None:
-    """The #this-week "Use Soon" field as it should read right now (None
-    if nothing's expiring)."""
+@dataclass
+class ThisWeekPantry:
+    """The pantry's two #this-week sections: what to use soon, and what to
+    cook from what's in stock. Either is None when there's nothing to say."""
+
+    use_soon: str | None = None
+    cook: str | None = None
+
+    def signature(self) -> str:
+        return f"{self.use_soon or ''}\n--\n{self.cook or ''}"
+
+
+async def this_week_pantry(grocy: Grocy, today) -> ThisWeekPantry:
+    """Both #this-week pantry sections as they should read right now."""
     volatile = await grocy.get_volatile_stock(due_soon_days=USE_SOON_DAYS)
-    return expiring_field_value(expiring_items(volatile), today)
+    expiring = expiring_items(volatile)
+    state = await load_state(grocy)
+    scored = score_recipes(
+        get_all_recipes(), state.products, state.aliases, state.stock,
+        {item["product_id"] for item in expiring},
+    )
+    return ThisWeekPantry(
+        use_soon=expiring_field_value(expiring, today),
+        cook=cook_this_week_field_value(scored),
+    )
 
 
 def expiring_items(volatile: dict, products_by_id: dict[int, dict] | None = None) -> list[dict]:

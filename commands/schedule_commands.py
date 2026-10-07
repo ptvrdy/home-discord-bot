@@ -44,7 +44,7 @@ from services.schedule import (
     resolve_day,
 )
 from services.grocy import Grocy, GrocyError, grocy_configured
-from services.pantry import USE_SOON_STATE_KEY, use_soon_text
+from services.pantry import THIS_WEEK_PANTRY_STATE_KEY, ThisWeekPantry, this_week_pantry
 from services.this_week_embed import build_this_week_embed
 
 
@@ -108,15 +108,15 @@ async def refresh_this_week(bot: commands.Bot) -> None:
 
     meal_plan_items = get_meal_plan_items(monday)
 
-    use_soon = None
+    pantry = ThisWeekPantry()
     if grocy_configured():
         try:
             async with Grocy() as grocy:
-                use_soon = await use_soon_text(grocy, now.date())
+                pantry = await this_week_pantry(grocy, now.date())
         except GrocyError:
             pass  # the pantry being down shouldn't break #this-week
     # Remembered so pantry changes can tell whether #this-week is out of date.
-    set_state(USE_SOON_STATE_KEY, use_soon or "")
+    set_state(THIS_WEEK_PANTRY_STATE_KEY, pantry.signature())
 
     embed = build_this_week_embed(
         monday,
@@ -128,7 +128,8 @@ async def refresh_this_week(bot: commands.Bot) -> None:
         partner_name=partner_name,
         chore_fairness=chore_fairness,
         meal_plan_items=meal_plan_items,
-        use_soon=use_soon,
+        use_soon=pantry.use_soon,
+        cook_this_week=pantry.cook,
     )
 
     message_id = get_state(THIS_WEEK_MESSAGE_STATE_KEY)

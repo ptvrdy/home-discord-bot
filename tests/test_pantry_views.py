@@ -24,7 +24,7 @@ from commands.pantry_commands import (
     _claim,
     refresh_this_week_if_stale,
 )
-from services.pantry import RESTOCKED_STATE_KEY, PutAwayItem
+from services.pantry import RESTOCKED_STATE_KEY, PutAwayItem, ThisWeekPantry
 from services.pantry_parser import ADD, CONSUME, PantryAction
 
 
@@ -187,7 +187,7 @@ class RefreshThisWeekTests(unittest.IsolatedAsyncioTestCase):
         return [
             patch.dict("os.environ", {"THIS_WEEK_CHANNEL_ID": "1", "GROCY_URL": "http://g", "GROCY_API_KEY": "k"}),
             patch("commands.pantry_commands.Grocy", return_value=grocy),
-            patch("commands.pantry_commands.use_soon_text", new=AsyncMock(return_value=current)),
+            patch("commands.pantry_commands.this_week_pantry", new=AsyncMock(return_value=current)),
             patch("commands.pantry_commands.get_state", return_value=shown),
             patch("commands.pantry_commands.refresh_this_week", new=AsyncMock()),
         ]
@@ -201,20 +201,27 @@ class RefreshThisWeekTests(unittest.IsolatedAsyncioTestCase):
         await refresh_this_week_if_stale(MagicMock())
         return refresh
 
+    BEEF = ThisWeekPantry(use_soon="🟠 Ground beef — tomorrow")
+
     async def test_rebuilds_when_use_soon_changed(self):
-        refresh = await self._run("🟠 Ground beef — tomorrow", "")
+        refresh = await self._run(self.BEEF, ThisWeekPantry().signature())
+        refresh.assert_awaited_once()
+
+    async def test_rebuilds_when_only_the_cooking_suggestion_changed(self):
+        cooking = ThisWeekPantry(use_soon=self.BEEF.use_soon, cook="• <#1> — have everything")
+        refresh = await self._run(cooking, self.BEEF.signature())
         refresh.assert_awaited_once()
 
     async def test_leaves_it_alone_when_nothing_changed(self):
-        refresh = await self._run("🟠 Ground beef — tomorrow", "🟠 Ground beef — tomorrow")
+        refresh = await self._run(self.BEEF, self.BEEF.signature())
         refresh.assert_not_awaited()
 
-    async def test_nothing_expiring_and_never_shown(self):
-        refresh = await self._run(None, None)
+    async def test_nothing_to_show_and_never_shown(self):
+        refresh = await self._run(ThisWeekPantry(), None)
         refresh.assert_not_awaited()
 
     async def test_never_raises(self):
-        refresh = await self._run("🟠 Ground beef — tomorrow", "", refresh_side_effect=RuntimeError("discord down"))
+        refresh = await self._run(self.BEEF, "", refresh_side_effect=RuntimeError("discord down"))
         refresh.assert_awaited_once()
 
 

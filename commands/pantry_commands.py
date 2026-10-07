@@ -63,10 +63,10 @@ from services.pantry import (
     publish_shelf_life_rules,
     relink_tj_item,
     sync_barcode_prices,
-    use_soon_text,
+    this_week_pantry,
     RESTOCKED_STATE_KEY,
+    THIS_WEEK_PANTRY_STATE_KEY,
     USE_SOON_DAYS,
-    USE_SOON_STATE_KEY,
 )
 from commands.schedule_commands import refresh_this_week
 from services.pantry_embed import (
@@ -128,17 +128,21 @@ async def _undo_all(transaction_ids: list[str]) -> None:
 
 
 async def refresh_this_week_if_stale(bot: commands.Bot) -> None:
-    """Rebuild #this-week when its "Use Soon" section no longer matches the
-    pantry - after a put-away, a #pantry message, a button, or (via the
-    10-minute pass) something bought by scanning in Grocy directly. A no-op
-    when nothing changed, so it doesn't rebuild on every pantry action.
-    Never raises: a stale #this-week isn't worth failing a reply over."""
+    """Rebuild #this-week when its pantry sections (Use Soon, Cook This
+    Week) no longer match the pantry - after a put-away, a #pantry message,
+    a button, or (via the 10-minute pass) something bought by scanning in
+    Grocy directly. A no-op when nothing changed, so it doesn't rebuild on
+    every pantry action. Never raises: a stale #this-week isn't worth
+    failing a reply over."""
     if not os.getenv("THIS_WEEK_CHANNEL_ID") or not grocy_configured():
         return
     try:
         async with Grocy() as grocy:
-            current = await use_soon_text(grocy, datetime.now(HOUSEHOLD_TZ).date())
-        if (current or "") == (get_state(USE_SOON_STATE_KEY) or ""):
+            current = await this_week_pantry(grocy, datetime.now(HOUSEHOLD_TZ).date())
+        shown = get_state(THIS_WEEK_PANTRY_STATE_KEY)
+        if shown is None and not (current.use_soon or current.cook):
+            return  # never shown, and nothing to show
+        if current.signature() == shown:
             return
         await refresh_this_week(bot)
     except Exception as error:

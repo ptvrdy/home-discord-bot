@@ -403,6 +403,11 @@ class UseSoonFieldTests(unittest.TestCase):
         self.assertEqual(names[names.index("🍽️ This Week's Food") + 1], "⏰ Use Soon")
         self.assertEqual(embed.fields[names.index("⏰ Use Soon")].value, "🟠 Chicken thigh — tomorrow")
 
+    def test_cook_this_week_follows_use_soon(self):
+        embed = build_this_week_embed(MONDAY, [], [], NOW, use_soon="🟠 Beef — tomorrow", cook_this_week="• <#1> — have everything")
+        names = [field.name for field in embed.fields]
+        self.assertEqual(names[names.index("⏰ Use Soon") + 1], "👩‍🍳 Cook This Week")
+
     def test_no_use_soon_field_when_nothing_expiring(self):
         embed = build_this_week_embed(MONDAY, [], [], NOW)
         self.assertNotIn("⏰ Use Soon", [field.name for field in embed.fields])
