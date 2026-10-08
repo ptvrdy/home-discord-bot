@@ -9,6 +9,8 @@ later (services/ingredient_match.py), so this module never needs Grocy.
 import re
 from dataclasses import dataclass
 
+from config.stores import match_store
+
 # Action kinds, in Grocy terms.
 CONSUME = "consume"          # used a specific amount (default 1)
 CONSUME_ALL = "consume_all"  # finished it / ran out
@@ -73,6 +75,7 @@ class PantryAction:
     kind: str
     item: str
     amount: float | None = None  # None = "the default" (1, or all of it)
+    store: str | None = None  # where it was bought ("... at urban market"); None = Trader Joe's
 
 
 @dataclass
@@ -119,16 +122,35 @@ def _split_clauses(message: str) -> list[str]:
     return clauses
 
 
+_STORE_SUFFIX = re.compile(r"\s+(?:at|from)\s+(?:the\s+)?(?P<store>[a-z'’ ]+?)\s*$")
+
+
+def _split_store(clause: str) -> tuple[str, str | None]:
+    """"milk at urban market" -> ("milk", "Urban Market"). Only known
+    grocery stores count, so "pasta from scratch" stays as it is."""
+    match = _STORE_SUFFIX.search(clause)
+    if match:
+        store = match_store(match.group("store"))
+        if store:
+            return clause[: match.start()], store
+    return clause, None
+
+
 def parse_pantry_message(message: str) -> ParseResult:
     """Parse a whole message into pantry actions.
 
     A clause with no verb of its own ("eggs" in "bought milk, eggs") reuses
-    the previous clause's verb, so lists read naturally."""
+    the previous clause's verb, so lists read naturally. A store named on a
+    purchase ("bought milk and eggs at urban market") applies to every
+    purchase in the message - one trip, one store."""
     actions: list[PantryAction] = []
     unparsed: list[str] = []
     previous_kind: str | None = None
+    trip_store: str | None = None
 
     for clause in _split_clauses(message):
+        clause, store = _split_store(clause)
+        trip_store = trip_store or store
         if previous_kind and not _VERB_START.match(clause) and not _TRAILING_STATE.search(clause):
             # Continuation of a list: "bought milk, 2 avocados, eggs".
             amount_match = re.match(rf"^{_AMOUNT}(?P<rest>.+)$", clause)
@@ -152,4 +174,8 @@ def parse_pantry_message(message: str) -> ParseResult:
         else:
             unparsed.append(clause)
 
+    if trip_store:
+        for action in actions:
+            if action.kind == ADD:
+                action.store = trip_store
     return ParseResult(actions, unparsed)

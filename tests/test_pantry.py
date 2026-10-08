@@ -33,6 +33,7 @@ def _grocy():
         "locations": [{"id": 10, "name": "Fridge"}, {"id": 20, "name": "Freezer"}, {"id": 30, "name": "Pantry"}],
         "quantity_units": [{"id": 2, "name": "Piece"}],
         "product_groups": [],
+        "shopping_locations": [{"id": 1, "name": "Trader Joe's"}, {"id": 2, "name": "Urban Market"}],
     }[entity]
     grocy.create_object.return_value = 99
     grocy.add_stock.return_value = "tx-add"
@@ -45,6 +46,7 @@ def _grocy():
 class PantryTestCase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         pantry._setup_cache.clear()
+        pantry._store_cache.clear()
         # Never touch the real SQLite database or the network.
         patches = [
             patch("services.pantry.record_pantry_product"),
@@ -190,7 +192,7 @@ class ScannedProductTests(PantryTestCase):
 
     async def test_known_products_are_left_alone(self):
         grocy = self._grocy_with_scanned_nut_mix()
-        with patch("services.pantry.get_pantry_products", return_value=[{"grocy_product_id": 9}]):
+        with patch("services.pantry.get_pantry_products", return_value=[{"grocy_product_id": 9, "tj_sku": "083372"}]):
             result = await pantry.adopt_scanned_products(grocy)
         self.assertEqual((result.adopted, result.merge_suggestions), ([], []))
         grocy.update_object.assert_not_awaited()
@@ -218,6 +220,30 @@ class ScannedProductTests(PantryTestCase):
             {"remove_id": 12, "remove_name": "Pasture Raised Large Brown Eggs", "keep_id": 2, "keep_name": "Egg"},
         ])
 
+    async def test_name_brand_scan_gets_a_section_and_a_merge_question(self):
+        grocy = _grocy()
+        products = [
+            {"id": 2, "name": "Egg", "product_group_id": 1, "picture_file_name": "x.png"},
+            # Scanned at Urban Market; Open Food Facts named it, no section.
+            {"id": 20, "name": "Eggland's Best Large Eggs", "product_group_id": None, "picture_file_name": None},
+        ]
+        barcodes = [{"id": 40, "product_id": 20, "barcode": "715141514590", "last_price": None}]
+        grocy.get_objects.side_effect = lambda entity: {
+            "product_barcodes": barcodes, "products": products,
+            "locations": [{"id": 10, "name": "Fridge"}, {"id": 20, "name": "Freezer"}, {"id": 30, "name": "Pantry"}],
+            "quantity_units": [{"id": 2, "name": "Piece"}], "product_groups": [],
+        }[entity]
+        linked = [{"grocy_product_id": 2, "tj_sku": None, "name": "Egg"}]
+        with patch("services.pantry.get_pantry_products", return_value=linked):
+            result = await pantry.adopt_scanned_products(grocy)
+
+        update = next(call.args[2] for call in grocy.update_object.await_args_list if call.args[:2] == ("products", 20))
+        self.assertEqual(update["location_id"], 10)  # eggs -> Fridge, from the name
+        self.assertEqual(result.merge_suggestions[0]["keep_name"], "Egg")
+        self.mocks[0].assert_called_once_with(20, "Eggland's Best Large Eggs", None)  # no TJ's link
+        grocy.create_object.assert_any_await("product_groups", {"name": "Dairy & Eggs"})
+        self.assertNotIn("product_barcodes", [call.args[0] for call in grocy.create_object.await_args_list])
+
     async def test_merge_duplicate_uses_grocys_merge_and_repoints_rosie(self):
         grocy = _grocy()
         with patch("services.pantry.merge_pantry_products") as merge_db:
@@ -233,7 +259,13 @@ class ScannedProductTests(PantryTestCase):
             {"id": 14, "product_id": 11, "amount": 1, "price": 4.49},  # already priced
             {"id": 15, "product_id": 12, "amount": 2, "price": None},   # not a TJ's-linked product
         ]
-        grocy.get_objects.side_effect = lambda entity: {"stock": stock}[entity]
+        stock.append(  # eggs from Urban Market: TJ's price would be wrong
+            {"id": 16, "product_id": 11, "amount": 1, "price": None, "shopping_location_id": 2}
+        )
+        grocy.get_objects.side_effect = lambda entity: {
+            "stock": stock,
+            "shopping_locations": [{"id": 1, "name": "Trader Joe's"}, {"id": 2, "name": "Urban Market"}],
+        }[entity]
         with patch("services.pantry.get_pantry_products", return_value=[{"grocy_product_id": 11, "tj_price": 4.49}]):
             filled = await pantry.backfill_missing_prices(grocy)
         self.assertEqual(filled, 1)
@@ -291,6 +323,21 @@ class RestockPlanTests(unittest.TestCase):
         self.assertEqual([row["name"] for row in new], ["Egg"])
         self.assertEqual(below, {1, 2})  # 9 was restocked, so it's forgotten
 
+    def test_low_items_go_to_their_usual_stores_list(self):
+        lists = [{"id": "tj", "name": "Trader Joe's"}, {"id": "fm", "name": "Farmers Market"}, {"id": "cvs", "name": "CVS"}]
+        new = [{"id": 1, "name": "Milk"}, {"id": 2, "name": "Egg"}, {"id": 3, "name": "Kombucha"}]
+        usual = {1: "Farmers Market", 2: None, 3: "Whole Foods"}  # no Whole Foods list here
+        grouped, no_list = pantry.group_restock_by_list(new, usual, lists, "Trader Joe's")
+        self.assertEqual(
+            sorted((target["name"], names) for target, names in grouped),
+            [("Farmers Market", ["Milk"]), ("Trader Joe's", ["Egg", "Kombucha"])],
+        )
+        self.assertEqual(no_list, [])
+
+        grouped, no_list = pantry.group_restock_by_list(new, usual, lists, None)  # no default list
+        self.assertEqual([(t["name"], n) for t, n in grouped], [("Farmers Market", ["Milk"])])
+        self.assertEqual(no_list, ["Egg", "Kombucha"])
+
     def test_preferred_list(self):
         lists = [{"id": "a", "name": "Trader Joe's"}, {"id": "b", "name": "Costco"}]
         self.assertEqual(pantry.preferred_list(lists, "trader joe's")["id"], "a")
@@ -338,7 +385,7 @@ class ApplyActionTests(PantryTestCase):
     async def test_add_unknown_item_creates_a_product(self):
         grocy, state = _grocy(), _state()
         result = await apply_action(grocy, state, PantryAction(ADD, "bananas", 3), None)
-        grocy.add_stock.assert_awaited_once_with(99, 3, price=None)
+        grocy.add_stock.assert_awaited_once_with(99, 3, price=None, store_id=None)
         self.assertEqual(result.line, "🛒 +3 Banana (3 on hand)")
 
     async def test_unknown_item_for_consume(self):
@@ -366,7 +413,34 @@ class PutAwayTests(PantryTestCase):
         self.assertEqual(result.transactions, ["tx-add", "tx-add"])
         self.assertEqual(result.done, plan)
         self.assertEqual(state.amount(2), 13)
-        grocy.add_stock.assert_any_await(99, 1, price=0.29)
+        grocy.add_stock.assert_any_await(99, 1, price=0.29, store_id=None)
+
+    async def test_put_away_from_another_store(self):
+        grocy, state = _grocy(), _state()
+        catalog = [{"sku": "1", "name": "Organic Bananas", "category": "Fresh Fruits & Veggies", "subcategory": "Fruits", "price": 0.29, "image_url": None}]
+        crossed_off = [
+            {"item_id": "a", "crossed_off_at": "t1", "list_id": "U", "text": "eggs"},
+            {"item_id": "b", "crossed_off_at": "t1", "list_id": "U", "text": "bananas"},
+        ]
+        plan = plan_put_away(crossed_off, state, catalog, trader_joes=False)
+        self.assertIsNone(plan[1].tj_item)  # no TJ's match outside Trader Joe's
+        self.assertEqual(plan[1].label(), "bananas → new")
+
+        with patch("services.pantry.get_tj_product", return_value={"price": 5.99}):
+            await put_away(grocy, state, plan, "Sam", store="Urban Market")
+        for call in grocy.add_stock.await_args_list:
+            self.assertEqual(call.kwargs, {"price": None, "store_id": 2})  # what you paid, at Urban Market
+
+    async def test_bought_at_another_store(self):
+        grocy, state = _grocy(), _state()
+        result = await apply_action(grocy, state, PantryAction(ADD, "eggs", 6, store="Urban Market"), state.product(2))
+        grocy.add_stock.assert_awaited_once_with(2, 6, price=None, store_id=2)
+        self.assertIn("from Urban Market", result.line)
+
+    async def test_new_store_is_created_in_grocy(self):
+        grocy, state = _grocy(), _state()
+        await apply_action(grocy, state, PantryAction(ADD, "eggs", 1, store="Farmers Market"), state.product(2))
+        grocy.create_object.assert_awaited_once_with("shopping_locations", {"name": "Farmers Market"})
 
     async def test_one_failure_does_not_lose_the_rest(self):
         from services.grocy import GrocyError

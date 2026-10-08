@@ -135,8 +135,10 @@ class Grocy:
         price: float | None = None,
         best_before_date: date | None = None,
         location_id: int | None = None,
+        store_id: int | None = None,
     ) -> str:
-        """Returns the transaction ID (for undo)."""
+        """Returns the transaction ID (for undo). store_id is the Grocy
+        "shopping location" the purchase was made at."""
         body: dict = {"amount": amount, "transaction_type": "purchase"}
         if price is not None:
             body["price"] = price
@@ -144,6 +146,8 @@ class Grocy:
             body["best_before_date"] = best_before_date.isoformat()
         if location_id is not None:
             body["location_id"] = location_id
+        if store_id is not None:
+            body["shopping_location_id"] = store_id
         result = await self._request("POST", f"/stock/products/{product_id}/add", json=body)
         return _transaction_id(result)
 

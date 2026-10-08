@@ -97,6 +97,25 @@ After each monthly catalog sync, Rosie also refreshes TJ's price on every linked
 - **These are only defaults** for new products. Edit a product in Grocy to change one
   that already exists.
 
+## Shopping at other stores
+
+Pantry items are generic ("Egg", "Milk"), so eggs from anywhere add to the same Egg.
+Which store a purchase came from is still tracked. Each OurGroceries list named in
+[`config/stores.py`](../config/stores.py) is a store: Trader Joe's, Urban Market, Whole
+Foods, Farmers Market and Ideal Food Basket. Other lists (CVS, Marshalls, the liquor store)
+are never offered for the pantry.
+
+| | Trader Joe's | Any other grocery store |
+|---|---|---|
+| `/put_away` from that store's list | TJ's catalog match, photo, price | Recorded at that store; new items get their section and shelf life from the name |
+| Price | TJ's price, filled in automatically | Whatever you paid. Grocy remembers it for that barcode |
+| "bought milk **at urban market**" in #pantry | (no store named = Trader Joe's) | Recorded at that store |
+| Scanning a barcode in Grocy | TJ's plugin fills everything in | Open Food Facts names it; Rosie adds a section and shelf life, and asks whether to merge it into an existing item (a Key Food egg carton → "Egg") |
+| `/restock … store: Farmers Market` | | That item goes on that store's list when it runs low |
+
+There's no Key Food or Whole Foods catalog like TJ's. Their online prices are Instacart
+estimates, so Rosie doesn't guess them.
+
 ## Running a dev copy on another machine
 
 To test without touching the real bot:
@@ -107,7 +126,9 @@ To test without touching the real bot:
    channel IDs, the Grocy settings above, and
    `ROSIE_DATABASE_PATH=data/rosie_dev.db` so the dev bot keeps its own database.
    - Leave the Google Calendar IDs unset; those features switch off cleanly.
-   - Use a scratch OurGroceries list for testing.
+   - Use a scratch OurGroceries list for testing, and make it the dev bot's only store
+     with `PANTRY_STORE_LISTS=Rosie Test` and `PANTRY_TJ_LIST=Rosie Test`, so it never
+     reads your real lists.
 3. Run `ROSIE_ENV_FILE=.env.dev python bot.py`. In PowerShell:
    `$env:ROSIE_ENV_FILE=".env.dev"; python bot.py`.
 

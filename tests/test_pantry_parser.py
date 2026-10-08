@@ -56,6 +56,21 @@ class PantryParserTests(unittest.TestCase):
     def test_a_means_one(self):
         self.assertEqual(actions("ate a banana"), [PantryAction(CONSUME, "banana", 1.0)])
 
+    def test_store_applies_to_every_purchase_in_the_message(self):
+        result = actions("bought milk and eggs at urban market")
+        self.assertEqual([(a.item, a.store) for a in result], [("milk", "Urban Market"), ("eggs", "Urban Market")])
+
+    def test_store_only_applies_to_purchases(self):
+        result = actions("bought ground turkey from the farmers market, used 2 eggs")
+        self.assertEqual([(a.kind, a.store) for a in result], [(ADD, "Farmers Market"), (CONSUME, None)])
+
+    def test_trader_joes_nicknames_and_no_store(self):
+        self.assertEqual(actions("picked up 2 avocados at tjs")[0].store, "Trader Joe's")
+        self.assertIsNone(actions("bought milk")[0].store)
+
+    def test_unknown_place_is_not_a_store(self):
+        self.assertEqual(actions("bought pie at grandma's")[0].item, "pie at grandma's")
+
     def test_unrecognized_text_is_reported(self):
         result = parse_pantry_message("hello there")
         self.assertEqual(result.actions, [])

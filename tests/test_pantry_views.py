@@ -126,13 +126,21 @@ class RestockLowItemsTests(unittest.IsolatedAsyncioTestCase):
         grocy.get_volatile_stock = AsyncMock(return_value={"missing_products": [
             {"id": 1, "name": "Egg", "amount_missing": 2}, {"id": 2, "name": "Butter", "amount_missing": 1},
         ]})
+        self.products = [{"id": 1, "name": "Egg"}, {"id": 2, "name": "Butter"}]
+        grocy.get_objects = AsyncMock(side_effect=lambda entity: {
+            "products": self.products,
+            "shopping_locations": [{"id": 7, "name": "Farmers Market"}],
+        }[entity])
+        self.grocy = grocy
         self.state = {}
         self.add_items = AsyncMock()
+        self.lists = [{"id": "tj", "name": "Trader Joe's"}, {"id": "fm", "name": "Farmers Market"}]
         self.patches = [
             patch("commands.pantry_commands.Grocy", return_value=grocy),
             patch("commands.pantry_commands.get_state", side_effect=lambda key: self.state.get(key)),
             patch("commands.pantry_commands.set_state", side_effect=lambda key, value: self.state.__setitem__(key, value)),
-            patch("commands.pantry_commands.get_grocery_lists", new=AsyncMock(return_value=[{"id": "tj", "name": "Trader Joe's"}])),
+            patch("commands.pantry_commands.get_grocery_lists", new=AsyncMock(side_effect=lambda: self.lists)),
+            patch("commands.pantry_commands._pantry_list_name", return_value="Trader Joe's"),
             patch("commands.pantry_commands.find_existing_locations", new=AsyncMock(return_value={"butter": "Trader Joe's"})),
             patch("commands.pantry_commands.add_items", new=self.add_items),
         ]
@@ -155,12 +163,9 @@ class RestockLowItemsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_huge_dip_is_split_across_messages(self):
         missing = [{"id": index, "name": f"Pantry staple number {index}", "amount_missing": 1} for index in range(300)]
-        with patch("commands.pantry_commands.Grocy") as grocy_class, \
-                patch("commands.pantry_commands.find_existing_locations", new=AsyncMock(return_value={})):
-            grocy = grocy_class.return_value
-            grocy.__aenter__ = AsyncMock(return_value=grocy)
-            grocy.__aexit__ = AsyncMock(return_value=False)
-            grocy.get_volatile_stock = AsyncMock(return_value={"missing_products": missing})
+        self.products = [{"id": row["id"], "name": row["name"]} for row in missing]
+        self.grocy.get_volatile_stock = AsyncMock(return_value={"missing_products": missing})
+        with patch("commands.pantry_commands.find_existing_locations", new=AsyncMock(return_value={})):
             await self.run_restock()
         messages = [call.args[0] for call in self.channel.send.await_args_list]
         self.assertGreater(len(messages), 1)
@@ -172,6 +177,15 @@ class RestockLowItemsTests(unittest.IsolatedAsyncioTestCase):
         await self.run_restock()
         self.add_items.assert_awaited_once()
         self.channel.send.assert_awaited_once()
+
+    async def test_each_item_goes_to_its_usual_stores_list(self):
+        self.products = [{"id": 1, "name": "Egg"}, {"id": 2, "name": "Butter", "shopping_location_id": 7}]
+        with patch("commands.pantry_commands.find_existing_locations", new=AsyncMock(return_value={})):
+            await self.run_restock()
+        self.assertEqual(
+            sorted(call.args for call in self.add_items.await_args_list),
+            [("fm", ["Butter"]), ("tj", ["Egg"])],
+        )
 
     async def test_failure_is_retried_next_pass(self):
         self.add_items.side_effect = RuntimeError("OurGroceries down")

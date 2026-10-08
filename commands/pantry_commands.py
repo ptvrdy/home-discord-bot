@@ -20,6 +20,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from config.discord_tags import DISCORD_TAGS
+from config.stores import is_grocery_list, is_trader_joes, match_store, store_lists
 from services.database import (
     forget_og_imported,
     get_all_recipes,
@@ -57,8 +58,11 @@ from services.pantry import (
     plan_put_away,
     put_away,
     recipe_consumption,
+    group_restock_by_list,
     merge_duplicate,
     plan_restock,
+    store_id,
+    store_names,
     preferred_list,
     publish_shelf_life_rules,
     relink_tj_item,
@@ -130,6 +134,15 @@ PANTRY_TAG_CHOICES = [
 def _channel_id(name: str) -> int | None:
     value = os.getenv(name)
     return int(value) if value else None
+
+
+async def store_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    """The grocery stores from config/stores.py, for /put_away and /restock."""
+    return [
+        app_commands.Choice(name=name, value=name)
+        for name in store_lists()
+        if current.lower() in name.lower()
+    ][:25]
 
 
 def _pantry_list_name() -> str | None:
@@ -311,9 +324,10 @@ def _checked_payloads(view: discord.ui.View) -> list:
 
 
 class ConfirmPutAwayButton(discord.ui.Button):
-    def __init__(self, list_id: str):
+    def __init__(self, list_id: str, store: str | None = None):
         super().__init__(label="Put Away", style=discord.ButtonStyle.primary)
         self.list_id = list_id
+        self.store = store  # the OurGroceries list's name = the Grocy store
 
     async def callback(self, interaction: discord.Interaction):
         if not await _claim(self.view, interaction):
@@ -335,7 +349,7 @@ class ConfirmPutAwayButton(discord.ui.Button):
         try:
             async with Grocy() as grocy:
                 state = await load_state(grocy)
-                result = await put_away(grocy, state, chosen, interaction.user.display_name)
+                result = await put_away(grocy, state, chosen, interaction.user.display_name, store=self.store)
         except (GrocyError, GrocyNotConfigured) as error:
             await interaction.edit_original_response(content=f"❌ I couldn't reach the pantry: {error}", view=None)
             return
@@ -351,11 +365,11 @@ class ConfirmPutAwayButton(discord.ui.Button):
 
 
 class PutAwayView(discord.ui.View):
-    def __init__(self, items: list, list_id: str):
+    def __init__(self, items: list, list_id: str, store: str | None = None):
         super().__init__(timeout=900)
         for item in items[:PUT_AWAY_BUTTON_LIMIT]:
             self.add_item(ToggleButton(item.label(), item))
-        self.add_item(ConfirmPutAwayButton(list_id))
+        self.add_item(ConfirmPutAwayButton(list_id, store))
         self.add_item(CancelButton())
 
 
@@ -870,11 +884,14 @@ class Pantry(commands.Cog):
 
     async def restock_low_items(self) -> None:
         """Add anything that just dropped below its /restock minimum to the
-        shopping list, once per dip, skipping what's already on a list.
-        Posts a short note either way. Never raises."""
+        shopping list - its usual store's list if it has one (e.g. milk ->
+        Farmers Market), otherwise PANTRY_LIST_NAME - once per dip,
+        skipping what's already on a list. Posts a short note. Never raises."""
         try:
             async with Grocy() as grocy:
                 volatile = await grocy.get_volatile_stock(due_soon_days=USE_SOON_DAYS)
+                products = {int(row["id"]): row for row in await grocy.get_objects("products")}
+                stores = await store_names(grocy)
         except GrocyError as error:
             logger.warning("Restock check failed: %s", error)
             return
@@ -885,35 +902,39 @@ class Pantry(commands.Cog):
             set_state(RESTOCKED_STATE_KEY, ",".join(str(product_id) for product_id in sorted(below)))
             return
 
-        names = [row["name"] for row in new]
+        usual_store = {
+            int(row["id"]): stores.get(int(products[int(row["id"])].get("shopping_location_id") or 0))
+            for row in new if int(row["id"]) in products
+        }
         channel = self._pantry_channel()
         try:
             lists = await get_grocery_lists()
-            target = preferred_list(lists, _pantry_list_name())
-            if target is None:
-                if channel:
-                    chunks = chunk_lines(["📉 Running low:"] + [f"• **{name}**" for name in names])
-                    for index, chunk in enumerate(chunks):
-                        is_last = index == len(chunks) - 1
-                        if is_last:
-                            await channel.send(chunk, view=ResultView([], names))
-                        else:
-                            await channel.send(chunk)
-            else:
-                on_a_list = await find_existing_locations(names)
-                to_add = [name for name in names if name.strip().lower() not in on_a_list]
+            by_list, no_list = group_restock_by_list(new, usual_store, lists, _pantry_list_name())
+            names = [row["name"] for row in new]
+            on_a_list = await find_existing_locations(names)
+            lines = []
+            for target, list_names in by_list:
+                to_add = [name for name in list_names if name.strip().lower() not in on_a_list]
                 if to_add:
                     await add_items(target["id"], to_add)
-                if channel:
-                    lines = []
-                    if to_add:
-                        lines.append(f"🛒 Running low — added to **{target['name']}**:")
-                        lines += [f"• **{name}**" for name in to_add]
-                    skipped = [name for name in names if name not in to_add]
-                    if skipped:
-                        lines.append("📉 Also low, but already on a list:")
-                        lines += [f"• {name}" for name in skipped]
-                    for chunk in chunk_lines(lines):
+                    lines.append(f"🛒 Running low — added to **{target['name']}**:")
+                    lines += [f"• **{name}**" for name in to_add]
+            skipped = [name for name in names if name.strip().lower() in on_a_list]
+            if skipped:
+                lines.append("📉 Also low, but already on a list:")
+                lines += [f"• {name}" for name in skipped]
+            no_list = [name for name in no_list if name.strip().lower() not in on_a_list]
+            if no_list:
+                lines.append("📉 Running low (no list set for these):")
+                lines += [f"• **{name}**" for name in no_list]
+            if channel and lines:
+                chunks = chunk_lines(lines)
+                for index, chunk in enumerate(chunks):
+                    # The last message gets an "add to list" button for anything without a list.
+                    view = ResultView([], no_list) if no_list and index == len(chunks) - 1 else None
+                    if view:
+                        await channel.send(chunk, view=view)
+                    else:
                         await channel.send(chunk)
         except Exception as error:
             # Leave the remembered set alone, so this dip is retried next pass.
@@ -939,22 +960,31 @@ class Pantry(commands.Cog):
     @app_commands.describe(
         product="Pantry item (leave empty to see everything Rosie restocks)",
         minimum="Add it to the list when you have fewer than this; 0 turns it off",
+        store="Which store's list it goes on (default: your usual list)",
     )
-    @app_commands.autocomplete(product=_grocy_product_autocomplete)
+    @app_commands.autocomplete(product=_grocy_product_autocomplete, store=store_autocomplete)
     async def restock(
         self,
         interaction: discord.Interaction,
         product: str | None = None,
         minimum: app_commands.Range[int, 0, 99] | None = None,
+        store: str | None = None,
     ):
         if not grocy_configured():
             await interaction.response.send_message(NOT_CONFIGURED_MESSAGE, ephemeral=True)
+            return
+        store_name = match_store(store) if store else None
+        if store and store_name is None:
+            await interaction.response.send_message(
+                f"❌ \"{store}\" isn't one of the grocery stores ({', '.join(store_lists())}).", ephemeral=True
+            )
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             async with Grocy() as grocy:
                 products = {str(row["id"]): row for row in await grocy.get_objects("products")}
                 state = await load_state(grocy)
+                stores = await store_names(grocy)
                 if product is None:
                     watched = sorted(
                         (row for row in products.values() if float(row.get("min_stock_amount") or 0) > 0),
@@ -965,9 +995,11 @@ class Pantry(commands.Cog):
                             "Nothing's set to restock yet. Try `/restock product: Egg minimum: 4`.", ephemeral=True
                         )
                         return
+                    default_list = _pantry_list_name() or "your list"
                     lines = [
                         f"• **{row['name']}** — below {float(row['min_stock_amount']):g} "
-                        f"(have {state.amount(int(row['id'])):g})"
+                        f"(have {state.amount(int(row['id'])):g}) → "
+                        f"{stores.get(int(row.get('shopping_location_id') or 0)) or default_list}"
                         for row in watched
                     ]
                     for chunk in chunk_lines([f"🔁 Rosie restocks {len(watched)} item(s):"] + lines):
@@ -978,21 +1010,32 @@ class Pantry(commands.Cog):
                 if row is None:
                     await interaction.followup.send("❌ Pick a pantry item from the suggestions.", ephemeral=True)
                     return
-                if minimum is None:
+                if minimum is None and store_name is None:
                     current = float(row.get("min_stock_amount") or 0)
                     status = f"restocked below {current:g}" if current else "not restocked automatically"
+                    usual = stores.get(int(row.get("shopping_location_id") or 0))
+                    if usual:
+                        status += f", from **{usual}**"
                     await interaction.followup.send(f"**{row['name']}** is {status}.", ephemeral=True)
                     return
-                await grocy.update_object("products", int(row["id"]), {"min_stock_amount": minimum})
+                update = {}
+                if minimum is not None:
+                    update["min_stock_amount"] = minimum
+                if store_name is not None:
+                    update["shopping_location_id"] = await store_id(grocy, store_name)
+                await grocy.update_object("products", int(row["id"]), update)
+                usual = store_name or stores.get(int(row.get("shopping_location_id") or 0))
         except GrocyError as error:
             await interaction.followup.send(f"❌ I couldn't update the pantry: {error}", ephemeral=True)
             return
 
         have = state.amount(int(row["id"]))
+        minimum = minimum if minimum is not None else int(float(row.get("min_stock_amount") or 0))
         if minimum == 0:
-            message = f"✅ **{row['name']}** won't be added to the list automatically anymore."
+            message = f"✅ **{row['name']}** won't be added to the list automatically"
+            message += f" (its usual store is now **{usual}**)." if store_name else " anymore."
         else:
-            list_name = _pantry_list_name() or "your shopping list"
+            list_name = usual or _pantry_list_name() or "your shopping list"
             message = (
                 f"✅ Rosie will add **{row['name']}** to **{list_name}** when you're down to fewer than "
                 f"{minimum} (you have {have:g})."
@@ -1054,9 +1097,10 @@ class Pantry(commands.Cog):
     # --- put-away ---
 
     async def _pending_put_away(self) -> tuple[list[dict], dict[str, str]]:
-        """Crossed-off items not yet put away, grouped by list. Also forgets
-        put-away records for items that are active again."""
-        items = await get_list_items_with_status()
+        """Crossed-off items not yet put away, from grocery-store lists only
+        (config/stores.py - never CVS or Marshalls). Also forgets put-away
+        records for items that are active again."""
+        items = [item for item in await get_list_items_with_status() if is_grocery_list(item["list_name"])]
         forget_og_imported([item["item_id"] for item in items if not item["crossed_off"]])
         imported = get_imported_og_keys()
         pending = [
@@ -1100,19 +1144,22 @@ class Pantry(commands.Cog):
             by_list.setdefault(item["list_id"], []).append(item)
 
         for list_id, list_items in by_list.items():
-            plan = plan_put_away(list_items, state, catalog)
+            store = list_names[list_id]
+            at_trader_joes = is_trader_joes(store)
+            plan = plan_put_away(list_items, state, catalog, trader_joes=at_trader_joes)
             content = (
-                f"🧺 Crossed off on **{list_names[list_id]}** — uncheck anything you didn't actually buy, "
+                f"🧺 Crossed off on **{store}** — uncheck anything you didn't actually buy, "
                 "then **Put Away**:"
             )
             if len(plan) > PUT_AWAY_BUTTON_LIMIT:
                 content += f"\n_(first {PUT_AWAY_BUTTON_LIMIT} of {len(plan)} — run /put_away again for the rest)_"
-            if not catalog:
+            if at_trader_joes and not catalog:
                 content += "\n_(TJ's catalog isn't loaded yet — run /sync_tj_catalog for photos and prices.)_"
-            await interaction.followup.send(content, view=PutAwayView(plan, list_id), ephemeral=True)
+            await interaction.followup.send(content, view=PutAwayView(plan, list_id, store), ephemeral=True)
 
     @app_commands.command(name="put_away", description="Add what you crossed off in OurGroceries to the pantry")
-    @app_commands.describe(list_name="Optional: only this OurGroceries list (default: all lists)")
+    @app_commands.describe(list_name="Optional: only this store's list (default: every grocery list)")
+    @app_commands.autocomplete(list_name=store_autocomplete)
     async def put_away_command(self, interaction: discord.Interaction, list_name: str | None = None):
         await interaction.response.defer(ephemeral=True, thinking=True)
         await self.send_put_away(interaction, list_name)

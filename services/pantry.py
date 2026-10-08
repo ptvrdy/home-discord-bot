@@ -15,6 +15,7 @@ import re
 from dataclasses import dataclass, field
 
 from config.shelf_life import FREEZER, FRIDGE, NEVER_EXPIRES, PANTRY, guess_category, rules_for_export, shelf_life_for
+from config.stores import is_trader_joes
 from services.database import (
     get_all_recipes,
     get_pantry_aliases,
@@ -82,6 +83,29 @@ async def ensure_setup(grocy: Grocy) -> dict:
     setup = {"locations": locations, "unit_id": unit_id, "groups": groups}
     _setup_cache[grocy.base_url] = setup
     return setup
+
+
+# Per-process cache of Grocy store ("shopping location") IDs, keyed by Grocy URL.
+_store_cache: dict[str, dict[str, int]] = {}
+
+
+async def store_id(grocy: Grocy, name: str | None) -> int | None:
+    """The Grocy store named after an OurGroceries list, created the first
+    time it's used. None for no store."""
+    if not name:
+        return None
+    stores = _store_cache.get(grocy.base_url)
+    if stores is None:
+        stores = {row["name"]: int(row["id"]) for row in await grocy.get_objects("shopping_locations")}
+        _store_cache[grocy.base_url] = stores
+    if name not in stores:
+        stores[name] = await grocy.create_object("shopping_locations", {"name": name})
+    return stores[name]
+
+
+async def store_names(grocy: Grocy) -> dict[int, str]:
+    """{store id: name} for every Grocy store."""
+    return {int(row["id"]): row["name"] for row in await grocy.get_objects("shopping_locations")}
 
 
 async def _group_id(grocy: Grocy, setup: dict, name: str | None) -> int | None:
@@ -310,23 +334,30 @@ async def adopt_scanned_products(grocy: Grocy) -> AdoptResult:
       yet (Open Food Facts doesn't set them)
     - recall / "back at TJ's" tracking
 
+    Name-brand products (bought at Urban Market, Whole Foods...; usually
+    named by Open Food Facts) get the same treatment minus the TJ's parts:
+    a section, location, and shelf life guessed from the name, and the
+    duplicate check - so a Key Food egg carton can become another barcode
+    on "Egg".
+
     Also flags scanned products that look like a duplicate of an existing
     one (to ask the household about merging - never merged automatically).
 
-    Only products whose barcode is a Trader Joe's-brand one and that Rosie
-    doesn't know yet are touched; each is adopted once."""
+    Only scanned products (ones with a barcode) that Rosie doesn't know yet
+    are touched; each is adopted once."""
     linked = get_pantry_products()
     known = {row["grocy_product_id"] for row in linked}
     barcodes = await grocy.get_objects("product_barcodes")
     existing = {row["barcode"] for row in barcodes}
 
-    candidates: dict[int, tuple[str, list[dict]]] = {}
+    # product id -> (TJ's sku, if any of its barcodes is a TJ's one; its barcode rows)
+    candidates: dict[int, tuple[str | None, list[dict]]] = {}
     for row in barcodes:
         product_id = int(row["product_id"])
-        sku = sku_from_barcode(row["barcode"])
-        if sku is None or product_id in known:
+        if product_id in known:
             continue
-        candidates.setdefault(product_id, (sku, []))[1].append(row)
+        sku, rows = candidates.get(product_id, (None, []))
+        candidates[product_id] = (sku or sku_from_barcode(row["barcode"]), rows + [row])
     result = AdoptResult()
     if not candidates:
         return result
@@ -337,37 +368,43 @@ async def adopt_scanned_products(grocy: Grocy) -> AdoptResult:
     adopted = result.adopted
     for product_id, (sku, barcode_rows) in candidates.items():
         product = products.get(product_id)
-        tj_item = get_tj_product(sku)
-        if product is None or tj_item is None:
+        if product is None:
             continue
+        tj_item = get_tj_product(sku) if sku else None
+        if tj_item:
+            category, subcategory = tj_item.get("category"), tj_item.get("subcategory")
+        else:
+            category, subcategory = guess_category(item_words(product["name"]))
 
         try:
-            if not product.get("product_group_id"):
-                rule = shelf_life_for(tj_item.get("category"), tj_item.get("subcategory"))
+            if not product.get("product_group_id") and category:
+                rule = shelf_life_for(category, subcategory)
                 update = {
                     "location_id": setup["locations"][rule["location"]],
                     "default_best_before_days": rule["days"],
                     "default_best_before_days_after_freezing": rule["freezer_days"],
                     "default_best_before_days_after_thawing": 1 if rule["days"] != NEVER_EXPIRES else 0,
                 }
-                group_id = await _group_id(grocy, setup, tj_item.get("category"))
+                group_id = await _group_id(grocy, setup, category)
                 if group_id is not None:
                     update["product_group_id"] = group_id
                 await grocy.update_object("products", product_id, update)
-            if not product.get("picture_file_name") and tj_item.get("image_url"):
-                await _attach_picture(grocy, product_id, tj_item)
-            await _register_barcodes(grocy, product_id, sku, existing, price=tj_item.get("price"))
-            if tj_item.get("price") is not None:
-                for row in barcode_rows:
-                    if not row.get("last_price"):
-                        await grocy.update_object("product_barcodes", int(row["id"]), {"last_price": tj_item["price"]})
+            if tj_item:
+                if not product.get("picture_file_name") and tj_item.get("image_url"):
+                    await _attach_picture(grocy, product_id, tj_item)
+                await _register_barcodes(grocy, product_id, sku, existing, price=tj_item.get("price"))
+                if tj_item.get("price") is not None:
+                    for row in barcode_rows:
+                        if not row.get("last_price") and sku_from_barcode(row["barcode"]):
+                            await grocy.update_object("product_barcodes", int(row["id"]), {"last_price": tj_item["price"]})
         except GrocyError as error:
             logger.warning("Couldn't fully adopt scanned product %s: %s", product_id, error)
 
-        record_pantry_product(product_id, product["name"], sku)
+        record_pantry_product(product_id, product["name"], sku if tj_item else None)
         learn(product["name"], product_id)
         adopted.append(product["name"])
-        linked_skus[product_id] = sku
+        if tj_item:
+            linked_skus[product_id] = sku
 
         others = [
             {"id": other_id, "name": other["name"]}
@@ -375,7 +412,7 @@ async def adopt_scanned_products(grocy: Grocy) -> AdoptResult:
             if other_id != product_id and str(other.get("active", 1)) != "0"
         ]
         duplicate = find_duplicate(
-            product["name"], tj_item.get("category"), others,
+            product["name"], category, others,
             lambda other: _product_category(other, linked_skus),
         )
         if duplicate:
@@ -399,12 +436,18 @@ async def backfill_missing_prices(grocy: Grocy) -> int:
     saved with no price (or $0). The first purchase right after a scan is
     the usual case: Grocy's Purchase page only pre-fills the price when the
     product is entered by barcode, and right after creating a product it
-    selects it by name instead. Returns how many entries were filled in."""
+    selects it by name instead. Purchases recorded at another store (eggs
+    from Urban Market) are left alone - TJ's price would be wrong there.
+    Returns how many entries were filled in."""
     prices = {row["grocy_product_id"]: row["tj_price"] for row in get_pantry_products() if row["tj_price"]}
+    stores = await store_names(grocy)
     filled = 0
     for entry in await grocy.get_objects("stock"):
         price = prices.get(int(entry["product_id"]))
         if price is None or (entry.get("price") is not None and float(entry["price"]) > 0):
+            continue
+        store = stores.get(int(entry["shopping_location_id"])) if entry.get("shopping_location_id") else None
+        if not is_trader_joes(store):
             continue
         await grocy.edit_stock_entry(entry, price=price)
         filled += 1
@@ -449,13 +492,21 @@ class PutAwayItem:
         return f"{self.text} → new"
 
 
-def plan_put_away(crossed_off: list[dict], state: PantryState, catalog: list[dict]) -> list[PutAwayItem]:
+def plan_put_away(
+    crossed_off: list[dict],
+    state: PantryState,
+    catalog: list[dict],
+    trader_joes: bool = True,
+) -> list[PutAwayItem]:
+    """What each crossed-off item is. New items from Trader Joe's are
+    matched to the TJ's catalog; new items from any other store aren't
+    (their section and shelf life come from the name instead)."""
     plan = []
     for item in crossed_off:
         match = state.match(item["text"])
         product = match.item if match and match.score >= CONFIDENT_SCORE else None
         tj_item = None
-        if product is None:
+        if product is None and trader_joes:
             tj_match = best_tj_match(item["text"], catalog)
             tj_item = tj_match.item if tj_match else None
         plan.append(
@@ -476,20 +527,27 @@ async def put_away(
     state: PantryState,
     items: list[PutAwayItem],
     created_by: str | None = None,
+    store: str | None = None,
 ) -> PutAwayResult:
-    """Add one of each item to stock (creating products as needed) at TJ's
-    price. One item failing doesn't stop the rest - and what *did* get
-    added is reported, so it can be undone and isn't offered again."""
+    """Add one of each item to stock (creating products as needed),
+    recorded at `store` (the OurGroceries list's name). Trader Joe's
+    purchases get TJ's price; elsewhere the price is left for what you
+    actually paid. One item failing doesn't stop the rest - and what *did*
+    get added is reported, so it can be undone and isn't offered again."""
     result = PutAwayResult([], [], [])
+    at_trader_joes = is_trader_joes(store)
+    location = await store_id(grocy, store)
     for item in items:
         try:
             product = item.product or await create_product(grocy, state, item.text, item.tj_item, created_by)
             if item.product:
                 learn(item.text, product["id"], created_by)
-            sku = state.tj_skus.get(product["id"])
-            tj_item = item.tj_item or (get_tj_product(sku) if sku else None)
-            price = tj_item.get("price") if tj_item else None
-            result.transactions.append(await grocy.add_stock(product["id"], 1, price=price))
+            price = None
+            if at_trader_joes:
+                sku = state.tj_skus.get(product["id"])
+                tj_item = item.tj_item or (get_tj_product(sku) if sku else None)
+                price = tj_item.get("price") if tj_item else None
+            result.transactions.append(await grocy.add_stock(product["id"], 1, price=price, store_id=location))
         except GrocyError as error:
             result.lines.append(f"❌ {item.text}: {error}")
             continue
@@ -519,14 +577,25 @@ async def apply_action(
     """Carry out one parsed action against an already-resolved product
     (or, for ADD with no product, create one from the TJ's catalog)."""
     if action.kind == ADD:
+        # "bought milk at urban market" - otherwise assume Trader Joe's.
+        at_trader_joes = is_trader_joes(action.store)
         if product is None:
-            product = await create_product(grocy, state, action.item, suggest_tj_item(action.item), created_by)
+            tj_item = suggest_tj_item(action.item) if at_trader_joes else None
+            product = await create_product(grocy, state, action.item, tj_item, created_by)
         amount = action.amount or 1
-        sku = state.tj_skus.get(product["id"])
-        tj_item = get_tj_product(sku) if sku else None
-        transaction = await grocy.add_stock(product["id"], amount, price=tj_item.get("price") if tj_item else None)
+        price = None
+        if at_trader_joes:
+            sku = state.tj_skus.get(product["id"])
+            tj_item = get_tj_product(sku) if sku else None
+            price = tj_item.get("price") if tj_item else None
+        transaction = await grocy.add_stock(
+            product["id"], amount, price=price, store_id=await store_id(grocy, action.store)
+        )
         state.stock[product["id"]] = state.amount(product["id"]) + amount
-        return ActionResult(f"🛒 +{amount:g} {product['name']} ({state.amount(product['id']):g} on hand)", transaction)
+        where = f" from {action.store}" if action.store else ""
+        return ActionResult(
+            f"🛒 +{amount:g} {product['name']}{where} ({state.amount(product['id']):g} on hand)", transaction
+        )
 
     if product is None:
         return ActionResult(f"❓ I don't have **{action.item}** in the pantry.")
@@ -629,6 +698,30 @@ def plan_restock(missing: list[dict], already_added: set[int]) -> tuple[list[dic
     below = {int(row["id"]) for row in missing}
     new = [row for row in missing if int(row["id"]) not in already_added]
     return new, below
+
+
+def group_restock_by_list(
+    new: list[dict],
+    usual_store: dict[int, str | None],
+    lists: list[dict],
+    default_list_name: str | None,
+) -> tuple[list[tuple[dict, list[str]]], list[str]]:
+    """Which OurGroceries list each low item goes on: its usual store's list
+    (same name as the store), otherwise the default list. Returns
+    ([(list, [item names]), ...], [names with no list to go on])."""
+    by_name = {entry["name"].lower(): entry for entry in lists}
+    default = preferred_list(lists, default_list_name)
+    grouped: dict[str, tuple[dict, list[str]]] = {}
+    no_list = []
+    for row in new:
+        store = usual_store.get(int(row["id"]))
+        target = by_name.get(store.lower()) if store else None
+        target = target or default
+        if target is None:
+            no_list.append(row["name"])
+            continue
+        grouped.setdefault(target["id"], (target, []))[1].append(row["name"])
+    return list(grouped.values()), no_list
 
 
 def preferred_list(lists: list[dict], preferred_name: str | None) -> dict | None:
