@@ -82,6 +82,7 @@ and how long they keep.
 | `/in_stock` | What's in the pantry right now, plus anything to use soon. |
 | `/restock [item] [minimum]` | Have Rosie add an item to your `PANTRY_LIST_NAME` list automatically when you have fewer than the minimum, e.g. `/restock Egg 4`. She does it once per dip, skips items already on a list, and posts a note in #pantry. Use `0` to stop, or leave everything empty to see what's set. |
 | `/pantry_fix <product> <tj_item>` | Point a pantry item at a different Trader Joe's product when the automatic match was wrong (updates its photo and price). |
+| `/pantry_status` | One private message showing whether each part of the pantry works: Grocy (version, API key), the Trader Joe's barcode plugin (it does a real test lookup), the catalog's age and store, Rosie's 10-minute pantry check, Rosie's and Grocy's backups, OurGroceries, and the pantry channels. Plus quick counts. Try this first if something seems off on the server. |
 | `/sync_tj_catalog` | Refresh Rosie's copy of the Trader Joe's catalog now. Runs automatically on the 1st of each month and posts a summary (with "back at TJ's" for seasonal items you've bought before) in #nudges. |
 
 Also automatic: `/review` → Made offers to use up the recipe's in-stock ingredients;

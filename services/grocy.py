@@ -69,6 +69,20 @@ class Grocy:
             return None
         return response.json()
 
+    # --- system ---
+
+    async def system_info(self) -> dict:
+        """{"grocy_version": {"Version": ...}, ...}"""
+        return await self._request("GET", "/system/info")
+
+    async def system_config(self) -> dict:
+        return await self._request("GET", "/system/config")
+
+    async def external_barcode_lookup(self, barcode: str) -> dict | None:
+        """Ask Grocy's barcode lookup plugin about a barcode without creating
+        anything."""
+        return await self._request("GET", f"/stock/barcodes/external-lookup/{barcode}", params={"add": "false"})
+
     # --- generic objects (products, locations, quantity units, groups) ---
 
     async def get_objects(self, entity: str) -> list[dict]:

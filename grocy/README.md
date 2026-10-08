@@ -75,7 +75,9 @@ starts. Each backup goes in its own folder, `backups/grocy_<date>_<time>/`, with
 - `files.tar.gz`: product photos, the Trader Joe's plugin and `config.php`.
 
 The newest 14 are kept. They live on the same disk as Grocy, so copy `backups/` somewhere
-else now and then (another computer, a USB drive, cloud storage).
+else now and then (another computer, a USB drive, cloud storage). `/pantry_status` in
+Discord shows how old the newest one is. If Grocy runs from somewhere other than this
+folder, set `GROCY_BACKUP_DIR` in Rosie's `.env` so she can find the backups.
 
 **To restore one:**
 ```

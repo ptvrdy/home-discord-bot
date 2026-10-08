@@ -239,6 +239,7 @@ HELP_SECTIONS = [
             ("/restock [item] [minimum]", "Auto-add an item to the shopping list when you have fewer than the minimum."),
             ("/pantry_fix", "Point a pantry item at a different Trader Joe's product."),
             ("/sync_tj_catalog", "Refresh the Trader Joe's catalog now (it also runs monthly)."),
+            ("/pantry_status", "Check every part of the pantry: Grocy, barcode plugin, catalog, backups, lists."),
         ],
     ),
     (

@@ -65,6 +65,7 @@ from services.pantry import (
     sync_barcode_prices,
     this_week_pantry,
     RESTOCKED_STATE_KEY,
+    SHELF_LIFE_RULES_STATE_KEY,
     THIS_WEEK_PANTRY_STATE_KEY,
     USE_SOON_DAYS,
 )
@@ -78,8 +79,24 @@ from services.pantry_embed import (
     score_recipes,
 )
 from services.pantry_parser import ADD, CONSUME, CONSUME_ALL, FREEZE, PantryAction, parse_pantry_message
+from services.backup import BACKUP_DIR
+from services.pantry_status import (
+    FAIL,
+    OFF,
+    OK,
+    UPKEEP_STATE_KEY,
+    WARN,
+    CATALOG_STALE_DAYS,
+    UPKEEP_STALE_MINUTES,
+    Check,
+    age_label,
+    backup_check,
+    build_status_embed,
+    grocy_backup_dir,
+    parse_time,
+)
 from services.recalls import fetch_recent_recalls, format_recall_alert, match_recalls
-from services.tj_catalog import fetch_catalog
+from services.tj_catalog import barcodes_for_sku, fetch_catalog, store_code
 
 logger = logging.getLogger(__name__)
 
@@ -709,6 +726,126 @@ class Pantry(commands.Cog):
 
         await self.restock_low_items()
         await refresh_this_week_if_stale(self.bot)
+        set_state(UPKEEP_STATE_KEY, datetime.now(HOUSEHOLD_TZ).isoformat())
+
+    # --- /pantry_status ---
+
+    async def _status_checks(self) -> tuple[list[Check], str | None]:
+        now = datetime.now(HOUSEHOLD_TZ).replace(tzinfo=None)
+        checks: list[Check] = []
+        numbers = None
+
+        # Grocy itself - everything else in the pantry depends on it.
+        if not grocy_configured():
+            checks.append(Check("Grocy", OFF, "not set up (`GROCY_URL` / `GROCY_API_KEY`)"))
+        else:
+            try:
+                async with Grocy() as grocy:
+                    info = await grocy.system_info()
+                    version = (info.get("grocy_version") or {}).get("Version", "?")
+                    state = await load_state(grocy)  # also proves the API key works
+                    checks.append(Check("Grocy", OK, f"version {version}, API key works"))
+                    checks.append(await self._plugin_check(grocy))
+                    volatile = await grocy.get_volatile_stock(due_soon_days=USE_SOON_DAYS)
+                    products = await grocy.get_objects("products")
+            except (GrocyError, GrocyNotConfigured) as error:
+                checks.append(Check("Grocy", FAIL, str(error)))
+                state = None
+            if state is not None:
+                watched = sum(1 for row in products if float(row.get("min_stock_amount") or 0) > 0)
+                in_stock = sum(1 for product in state.products if state.amount(product["id"]) > 0)
+                linked = sum(1 for row in get_pantry_products() if row["tj_sku"])
+                numbers = (
+                    f"{len(state.products)} products · {in_stock} in stock · {linked} linked to TJ's · "
+                    f"{watched} on /restock · {len(expiring_items(volatile))} to use soon"
+                )
+
+        # The TJ's catalog and the rules the barcode plugin reads.
+        catalog = get_tj_catalog()
+        synced = parse_time(get_state(CATALOG_SYNCED_STATE_KEY))
+        if not catalog:
+            checks.append(Check("TJ's catalog", WARN, "empty — run `/sync_tj_catalog`"))
+        else:
+            stale = synced is None or (now - synced).days > CATALOG_STALE_DAYS
+            checks.append(Check(
+                "TJ's catalog", WARN if stale else OK,
+                f"{len(catalog):,} items, store {store_code()}, synced {age_label(synced, now)}",
+            ))
+        checks.append(Check(
+            "Shelf-life rules", OK if get_state(SHELF_LIFE_RULES_STATE_KEY) else WARN,
+            "shared with the barcode plugin" if get_state(SHELF_LIFE_RULES_STATE_KEY) else "not shared yet — restart Rosie",
+        ))
+
+        # The 10-minute pass (links scans, fills prices, restocks, #this-week).
+        if grocy_configured():
+            upkeep = parse_time(get_state(UPKEEP_STATE_KEY))
+            stale = upkeep is None or (now - upkeep).total_seconds() > UPKEEP_STALE_MINUTES * 60
+            checks.append(Check("10-minute pantry check", WARN if stale else OK, f"last ran {age_label(upkeep, now)}"))
+
+        # Backups: Rosie's (her own folder) and Grocy's (the backup container's).
+        checks.append(backup_check("Rosie's backups", BACKUP_DIR, "*.db", now))
+        if grocy_configured():
+            checks.append(backup_check("Grocy's backups", grocy_backup_dir(), "grocy_*", now))
+
+        # OurGroceries - put-away, restock, and "add to list" all need it.
+        if not (os.getenv("OURGROCERIES_USERNAME") and os.getenv("OURGROCERIES_PASSWORD")):
+            checks.append(Check("OurGroceries", OFF, "not set up"))
+        else:
+            try:
+                lists = await get_grocery_lists()
+                target = preferred_list(lists, _pantry_list_name())
+                if target is None:
+                    checks.append(Check(
+                        "OurGroceries", WARN,
+                        f"{len(lists)} lists, but no `PANTRY_LIST_NAME` list to restock to"
+                        + (f" (looked for \"{_pantry_list_name()}\")" if _pantry_list_name() else ""),
+                    ))
+                else:
+                    checks.append(Check("OurGroceries", OK, f"{len(lists)} lists, restocks go to **{target['name']}**"))
+            except Exception as error:
+                checks.append(Check("OurGroceries", FAIL, f"couldn't connect: {error}"))
+
+        # Channels pantry messages go to.
+        missing = [
+            name for name, channel_id in (
+                ("#pantry", self.pantry_channel_id),
+                ("#nudges", self.nudges_channel_id),
+                ("#this-week", _channel_id("THIS_WEEK_CHANNEL_ID")),
+            )
+            if channel_id is None or not isinstance(self.bot.get_channel(channel_id), discord.abc.Messageable)
+        ]
+        checks.append(Check(
+            "Channels", OK if not missing else WARN,
+            "#pantry, #nudges, #this-week all set" if not missing else f"not set or not visible: {', '.join(missing)}",
+        ))
+        return checks, numbers
+
+    async def _plugin_check(self, grocy: Grocy) -> Check:
+        """Is Grocy's Trader Joe's barcode plugin on, and can it read Rosie's
+        catalog? Looks up a real TJ's barcode (add=false, so nothing is
+        created) from a section that already exists in Grocy."""
+        config = await grocy.system_config()
+        plugin = config.get("STOCK_BARCODE_LOOKUP_PLUGIN")
+        if plugin != "TraderJoesBarcodeLookupPlugin":
+            return Check("Barcode plugin", WARN, f"Grocy is using `{plugin}`, not the Trader Joe's one")
+
+        groups = {row["name"] for row in await grocy.get_objects("product_groups")}
+        sample = next((row for row in get_tj_catalog() if row.get("category") in groups), None)
+        if sample is None:
+            return Check("Barcode plugin", OK, "on (full check runs once the pantry has a TJ's item)")
+        result = await grocy.external_barcode_lookup(barcodes_for_sku(sample["sku"])[0])
+        if result and result.get("name") == sample["name"]:
+            return Check("Barcode plugin", OK, "on, and reading Rosie's catalog")
+        return Check(
+            "Barcode plugin", WARN,
+            "on, but can't read Rosie's catalog — check `ROSIE_DATA_DIR` / `ROSIE_DB_FILE` in grocy/.env",
+        )
+
+    @app_commands.command(name="pantry_status", description="Check that every part of the pantry is working")
+    async def pantry_status(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        checks, numbers = await self._status_checks()
+        await interaction.followup.send(embed=build_status_embed(checks, numbers), ephemeral=True)
 
     @adopt_scanned_task.before_loop
     async def before_adopt_scanned(self):
