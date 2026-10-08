@@ -36,7 +36,9 @@ services:
       - GROCY_STOCK_BARCODE_LOOKUP_PLUGIN=TraderJoesBarcodeLookupPlugin
       - ROSIE_DB=/rosie/${ROSIE_DB_FILE:-rosies_recipe_box.db}
     volumes:
-      - ./config:/config
+      # Grocy's data. GROCY_CONFIG_DIR in .env points this at an existing
+      # Grocy's data instead (e.g. a Docker volume's folder) - see .env.example.
+      - ${GROCY_CONFIG_DIR:-./config}:/config
       - ./plugins/TraderJoesBarcodeLookupPlugin.php:/config/data/plugins/TraderJoesBarcodeLookupPlugin.php:ro
       # Rosie's data folder (this repo's data/), read-only, for the TJ's catalog.
       - ${ROSIE_DATA_DIR:-../data}:/rosie:ro
@@ -52,7 +54,7 @@ services:
     environment:
       - TZ=America/New_York
     volumes:
-      - ./config:/config:ro
+      - ${GROCY_CONFIG_DIR:-./config}:/config:ro
       - ./backups:/backups
       - ./backup.sh:/backup.sh:ro
     command: >

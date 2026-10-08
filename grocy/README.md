@@ -36,6 +36,22 @@ tested on. To move to a newer Grocy, change the image tag in `docker-compose.yml
 `docker compose pull && docker compose up -d`, then scan a Trader Joe's item and run
 `/in_stock` to check everything still works.
 
+## Already running Grocy?
+
+To keep an existing Grocy's products and stock (e.g. one started with
+`docker run --name grocy -v grocy_volume:/config ...`):
+
+1. **Back up its data first.** Stop it, then copy its data folder:
+   `docker volume inspect grocy_volume --format '{{.Mountpoint}}'` shows where the folder is.
+2. **Remove the old container** with `docker rm grocy`. The data volume is not deleted.
+3. **Point this setup at that folder** with a `.env` here:
+   `GROCY_CONFIG_DIR=/var/lib/docker/volumes/grocy_volume/_data`.
+4. **Start it:** `docker compose up -d`. If this version is newer, Grocy upgrades the
+   database itself, and your login, products and stock are all still there.
+
+Rosie works with your existing products: she matches them by name, and adds Fridge /
+Freezer / Pantry locations if yours are named differently.
+
 ## Scanning Trader Joe's barcodes
 
 `plugins/TraderJoesBarcodeLookupPlugin.php` handles unknown barcodes scanned in Grocy.
