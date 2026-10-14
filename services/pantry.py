@@ -9,6 +9,7 @@ Products are created the first time something is bought, never in bulk, so
 Grocy only ever holds things this household actually buys.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -757,9 +758,13 @@ async def this_week_pantry(grocy: Grocy, today) -> ThisWeekPantry:
     volatile = await grocy.get_volatile_stock(due_soon_days=USE_SOON_DAYS)
     expiring = expiring_items(volatile)
     state = await load_state(grocy)
-    scored = score_recipes(
-        get_all_recipes(), state.products, state.aliases, state.stock,
-        {item["product_id"] for item in expiring},
+    # Every recipe line against every pantry product is real CPU work with a
+    # big pantry - run it off the event loop so Discord commands never wait.
+    scored = await asyncio.to_thread(
+        lambda: score_recipes(
+            get_all_recipes(), state.products, state.aliases, state.stock,
+            {item["product_id"] for item in expiring},
+        )
     )
     return ThisWeekPantry(
         use_soon=expiring_field_value(expiring, today),

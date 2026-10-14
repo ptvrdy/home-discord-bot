@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 
 import discord
@@ -76,7 +77,7 @@ class Wishlist(commands.Cog):
         await interaction.response.defer()
 
         try:
-            metadata = scrape_wishlist_link(url)
+            metadata = await asyncio.to_thread(scrape_wishlist_link, url)  # network: off the event loop
 
             embed = build_wishlist_item_embed(
                 metadata["title"], url, metadata["image_url"], metadata["price"], interaction.user.display_name

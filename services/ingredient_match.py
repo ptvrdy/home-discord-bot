@@ -12,6 +12,7 @@ garlic). Two things only match if their head nouns agree, which is what keeps
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 
 # Units and container words that describe an amount, not the item itself.
 UNITS = {
@@ -104,6 +105,13 @@ def alternatives(text: str) -> list[str]:
     return options or [text]
 
 
+# Normalizing is pure but regex-heavy, and the same strings (every pantry
+# product name, every recipe line) are compared tens of thousands of times
+# when ranking recipes - so each distinct string is only normalized once.
+_NORMALIZE_CACHE_SIZE = 16384
+
+
+@lru_cache(maxsize=_NORMALIZE_CACHE_SIZE)
 def normalize_item(text: str) -> str:
     """Reduce an ingredient line or item name to its essential words, e.g.
     "2 lbs boneless, skinless chicken thighs (about 6)" -> "chicken thigh".
@@ -120,6 +128,7 @@ def option_words(text: str) -> list[list[str]]:
     return [words for words in (_normalize_option(option).split() for option in alternatives(text)) if words]
 
 
+@lru_cache(maxsize=_NORMALIZE_CACHE_SIZE)
 def _normalize_option(text: str) -> str:
     text = re.sub(r"\([^)]*\)", " ", text.lower())  # parentheticals: "(about 6)"
     # Commas usually start trailing prep ("onion, diced"), but sometimes

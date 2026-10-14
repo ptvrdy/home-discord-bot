@@ -1,3 +1,4 @@
+import asyncio
 import os
 from datetime import datetime, time, timedelta
 
@@ -87,7 +88,7 @@ async def refresh_this_week(bot: commands.Bot) -> None:
 
     calendar_error = None
     try:
-        events = get_week_events(monday)
+        events = await asyncio.to_thread(get_week_events, monday)
     except Exception as error:
         events = []
         calendar_error = str(error)
@@ -295,7 +296,7 @@ async def _confirm_and_book(
     (someone could have booked something else in the meantime), then book it.
     Assumes the caller already deferred the interaction."""
     try:
-        events = get_week_events(week_start)
+        events = await asyncio.to_thread(get_week_events, week_start)
     except Exception as error:
         await interaction.edit_original_response(
             content=f"❌ I couldn't check the calendar: {error}", view=None
@@ -376,7 +377,7 @@ class TaskSlotView(RequesterOnlyView):
 
         duration_minutes = int((self.end - self.start).total_seconds() // 60)
         try:
-            events = get_week_events(self.week_start)
+            events = await asyncio.to_thread(get_week_events, self.week_start)
         except Exception as error:
             await interaction.edit_original_response(
                 content=f"❌ I couldn't check the calendar: {error}", view=None
@@ -474,7 +475,7 @@ class EditTaskModal(discord.ui.Modal, title="Edit Task Time"):
 
         week_start = get_week_start(target_day)
         try:
-            events = get_week_events(week_start)
+            events = await asyncio.to_thread(get_week_events, week_start)
         except Exception as error:
             await interaction.followup.send(f"❌ I couldn't check the calendar: {error}", ephemeral=True)
             return
@@ -700,7 +701,7 @@ class Schedule(commands.Cog):
             end = start + timedelta(minutes=duration_minutes)
 
             try:
-                events = get_week_events(get_week_start(target_day))
+                events = await asyncio.to_thread(get_week_events, get_week_start(target_day))
             except Exception as error:
                 await interaction.followup.send(f"❌ I couldn't check the calendar: {error}")
                 return
@@ -737,7 +738,7 @@ class Schedule(commands.Cog):
             return
 
         try:
-            events = get_week_events(week_start)
+            events = await asyncio.to_thread(get_week_events, week_start)
         except Exception as error:
             await interaction.followup.send(f"❌ I couldn't check the calendar: {error}")
             return
@@ -760,7 +761,7 @@ class Schedule(commands.Cog):
         if not slots and day is None:
             search_week_start = week_start + timedelta(days=7)
             try:
-                events = get_week_events(search_week_start)
+                events = await asyncio.to_thread(get_week_events, search_week_start)
             except Exception as error:
                 await interaction.followup.send(f"❌ I couldn't check the calendar: {error}")
                 return
@@ -846,7 +847,7 @@ class Schedule(commands.Cog):
         week_start = get_week_start(now.date())
 
         try:
-            events = get_week_events(week_start)
+            events = await asyncio.to_thread(get_week_events, week_start)
         except Exception as error:
             await interaction.followup.send(f"❌ I couldn't check the calendar: {error}")
             return
@@ -874,7 +875,7 @@ class Schedule(commands.Cog):
         if remaining:
             next_week_start = week_start + timedelta(days=7)
             try:
-                next_events = get_week_events(next_week_start)
+                next_events = await asyncio.to_thread(get_week_events, next_week_start)
                 next_slots = find_slots(
                     next_events,
                     next_week_start,

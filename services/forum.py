@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import discord
@@ -153,7 +154,9 @@ async def create_recipe_post(
 ) -> discord.Thread:
     title = recipe.title or "Untitled Recipe"
 
-    embed = create_recipe_embed(recipe)
+    # create_recipe_embed may download the image to decide its layout (up to
+    # 5s) - off the event loop, so other commands don't time out meanwhile.
+    embed = await asyncio.to_thread(create_recipe_embed, recipe)
 
     tags = get_matching_tags(channel, recipe.tags)
 

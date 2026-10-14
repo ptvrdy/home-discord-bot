@@ -520,7 +520,8 @@ class FixRecipeModal(discord.ui.Modal, title="Fix Recipe Details"):
                 await self.thread.edit(applied_tags=get_matching_tags(parent, recipe.tags))
 
             starter_message = await self.thread.fetch_message(self.thread.id)
-            await starter_message.edit(embed=create_recipe_embed(recipe))
+            # create_recipe_embed may download the image to size it - off the event loop.
+            await starter_message.edit(embed=await asyncio.to_thread(create_recipe_embed, recipe))
 
             await interaction.followup.send("✅ Recipe updated!", ephemeral=True)
         except (discord.HTTPException, sqlite3.Error) as error:
@@ -589,7 +590,7 @@ class FixRecipeImageModal(discord.ui.Modal, title="Fix Recipe Image"):
         # Attachments only change when the image does: a new download replaces
         # any old one, and removing the image or switching to a plain link
         # drops it. An unchanged image is left exactly as it is.
-        edit_kwargs: dict = {"embed": create_recipe_embed(recipe)}
+        edit_kwargs: dict = {"embed": await asyncio.to_thread(create_recipe_embed, recipe)}
         if prepared and prepared.data:
             edit_kwargs["attachments"] = [discord.File(io.BytesIO(prepared.data), filename=prepared.filename)]
         elif prepared or new_image_url is None:
@@ -1072,7 +1073,9 @@ class Recipe(commands.Cog):
         await interaction.response.defer()
 
         try:
-            recipe = scrape_recipe(url)
+            # Downloading and parsing the page takes seconds; off the event
+            # loop so every other command keeps answering meanwhile.
+            recipe = await asyncio.to_thread(scrape_recipe, url)
         except Exception as e:
             print(type(e))
             print(e)

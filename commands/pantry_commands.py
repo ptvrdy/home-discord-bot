@@ -11,6 +11,7 @@ Grocy is optional - without GROCY_URL/GROCY_API_KEY every command explains
 what's missing and every background task quietly does nothing.
 """
 
+import asyncio
 import logging
 import os
 from datetime import datetime, time
@@ -1282,8 +1283,10 @@ class Pantry(commands.Cog):
             return
 
         expiring_ids = {item["product_id"] for item in expiring_items(volatile)}
-        scored = score_recipes(
-            get_all_recipes(tag.value if tag else None), state.products, state.aliases, state.stock, expiring_ids
+        scored = await asyncio.to_thread(  # CPU-heavy with a big pantry; keep Discord responsive
+            lambda: score_recipes(
+                get_all_recipes(tag.value if tag else None), state.products, state.aliases, state.stock, expiring_ids
+            )
         )
         await interaction.followup.send(embed=build_what_can_i_make_embed(scored, tag.name if tag else None))
 
