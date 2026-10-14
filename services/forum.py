@@ -1,8 +1,12 @@
+import logging
+
 import discord
 
 from models.recipe_card import Recipe
 from services.embed import build_instructions_embed, create_recipe_embed
 from config.discord_tags import DISCORD_TAGS
+
+logger = logging.getLogger(__name__)
 
 
 MAX_APPLIED_FORUM_TAGS = 5
@@ -160,9 +164,16 @@ async def create_recipe_post(
     )
     thread = created_thread.thread
 
+    # The post already exists at this point, so a failure here must not stop
+    # the caller from saving the recipe - that's how posts ended up missing
+    # from the database. The instructions are in the database either way,
+    # and /add_instructions can repost them.
     instructions_embed = build_instructions_embed(recipe)
     if instructions_embed is not None:
-        await thread.send(embed=instructions_embed)
+        try:
+            await thread.send(embed=instructions_embed)
+        except discord.HTTPException as error:
+            logger.warning("Posted %r but couldn't post its instructions: %s", title, error)
 
     return thread
 

@@ -25,6 +25,7 @@ class HouseBot(commands.Bot):
         await self.load_extension("commands.meal_plan_commands")
         await self.load_extension("commands.backup_commands")
         await self.load_extension("commands.pantry_commands")
+        await self.load_extension("commands.recipe_sync_commands")
         await self.tree.sync()
 
 bot = HouseBot(

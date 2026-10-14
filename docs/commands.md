@@ -122,6 +122,7 @@ real @-mention that pings them; otherwise it just prints their name.
 | Command | What it does |
 |---|---|
 | `/check_setup` | Compares every configured tag against what's actually on the recipe forum channel and reports mismatches or missing tags. |
+| `/check_recipes` | Compares every post in the recipe forum (archived ones too) with the database. Lists posts the database is missing (invisible to search, `/random`, `/review`, `/what_can_i_make`) and database recipes whose post was deleted. **Re-import** saves the missing ones: re-scraped from the original link when it still works (keeping any `/fix` rename and the post's status), otherwise rebuilt from the post's card and instructions. |
 | `/check_calendar_setup` | Verifies the Google service account can reach each configured calendar (i.e. it's actually been shared), and reports the calendar name or the error for each. |
 | `/backup_now` | Manually back up the database right now instead of waiting for the automatic daily 3am backup. Keeps the most recent 14 backups in `data/backups/`, pruning older ones. |
 

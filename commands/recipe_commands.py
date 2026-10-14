@@ -1,5 +1,6 @@
 import asyncio
 import io
+import logging
 import os
 import sqlite3
 from datetime import datetime
@@ -55,6 +56,8 @@ from services.recipe_tags import generate_recipe_tags
 from services.scraper import scrape_recipe
 from services.time_parser import parse_minutes
 
+
+logger = logging.getLogger(__name__)
 
 RECIPE_STATUS_CHOICES = [
     app_commands.Choice(name="📝 Needs Review", value="needs_review"),
@@ -977,7 +980,17 @@ class Recipe(commands.Cog):
             return
 
         thread = await create_recipe_post(channel, recipe)
-        save_recipe(recipe, thread.id)
+        try:
+            save_recipe(recipe, thread.id)
+        except Exception as error:
+            # The post exists but the database row doesn't - say so, instead
+            # of failing silently and leaving a post search can't find.
+            logger.exception("Posted %r but couldn't save it", recipe.title)
+            await interaction.followup.send(
+                f"⚠️ Posted <#{thread.id}>, but I couldn't save it to the recipe box ({error}). "
+                "Run `/check_recipes` to fix it."
+            )
+            return
 
         await interaction.followup.send("✅ Recipe added!")
 
