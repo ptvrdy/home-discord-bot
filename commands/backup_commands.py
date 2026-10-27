@@ -1,25 +1,13 @@
-import os
-from datetime import datetime, time
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from datetime import time
 
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
 from services.backup import BACKUP_RETENTION, backup_database, prune_old_backups
+from services.timezone import household_timezone
 
-
-def _household_timezone():
-    timezone_name = os.getenv("HOUSEHOLD_TIMEZONE", "America/New_York")
-    try:
-        return ZoneInfo(timezone_name)
-    except ZoneInfoNotFoundError:
-        # Windows has no built-in IANA timezone database; fall back to the
-        # system's local offset rather than retrying the same failed lookup.
-        return datetime.now().astimezone().tzinfo
-
-
-HOUSEHOLD_TZ = _household_timezone()
+HOUSEHOLD_TZ = household_timezone()
 BACKUP_TIME = time(3, 0, tzinfo=HOUSEHOLD_TZ)  # daily, a quiet hour
 
 

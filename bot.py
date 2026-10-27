@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 load_dotenv(os.getenv("ROSIE_ENV_FILE", ".env"))
 
 from services.database import initialize_database  # noqa: E402
+from services.timezone import describe_timezone, timezone_warning  # noqa: E402
 
 TOKEN = os.environ["DISCORD_TOKEN"]
 
@@ -40,6 +41,14 @@ async def on_ready():
 
     if bot.user:
         print(f"Bot ID: {bot.user.id}")
+
+    # Make the time zone Rosie is REALLY using visible in the log: a missing tz
+    # database silently shifts every scheduled time (and breaks at daylight-saving
+    # changes), so say so plainly instead of leaving it to be discovered.
+    print(f"🕒 Household time zone: {describe_timezone()}")
+    warning = timezone_warning()
+    if warning:
+        print(f"⚠️  {warning}")
 
 
 bot.run(TOKEN)

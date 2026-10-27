@@ -19,12 +19,12 @@ Setup (see README's Google Calendar section for the full walkthrough):
 
 import os
 from datetime import date, datetime, timedelta
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 from services.schedule import deduplicate_events, normalize_event
+from services.timezone import household_timezone, timezone_name
 
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
@@ -57,17 +57,25 @@ def _calendar_label(env_var: str) -> str:
     return "Discord (Gaming)"
 
 
-def _household_timezone():
-    timezone_name = os.getenv("HOUSEHOLD_TIMEZONE", "America/New_York")
-    try:
-        return ZoneInfo(timezone_name)
-    except ZoneInfoNotFoundError:
-        # Windows has no built-in IANA timezone database; fall back to the
-        # system's local offset rather than retrying the same failed lookup.
-        return datetime.now().astimezone().tzinfo
+HOUSEHOLD_TZ = household_timezone()
 
 
-HOUSEHOLD_TZ = _household_timezone()
+def _event_time(moment: datetime) -> dict:
+    """The {"dateTime", "timeZone"} object for an event's start or end.
+
+    The zone name is sent EXPLICITLY. Without it Google files the event under the
+    calendar's own default zone - and a calendar made through the API, or owned
+    by a service account, is often UTC, which is how tasks ended up "in UTC".
+    The dateTime is converted to household time too, so its offset always
+    agrees with the zone name. (A fixed-offset fallback has no IANA name, so
+    then only the dateTime is sent - see services/timezone.py.)"""
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(HOUSEHOLD_TZ)
+    body = {"dateTime": moment.isoformat()}
+    name = timezone_name(HOUSEHOLD_TZ)
+    if name:
+        body["timeZone"] = name
+    return body
 
 
 def _credentials_path() -> str:
@@ -182,8 +190,8 @@ def create_event(
     calendar_id = calendar_id or default_write_calendar_id()
     body = {
         "summary": name,
-        "start": {"dateTime": start.isoformat()},
-        "end": {"dateTime": end.isoformat()},
+        "start": _event_time(start),
+        "end": _event_time(end),
     }
     return service.events().insert(calendarId=calendar_id, body=body).execute()
 
@@ -227,8 +235,8 @@ def update_event(
     service = service or get_service()
     calendar_id = calendar_id or default_write_calendar_id()
     body = {
-        "start": {"dateTime": start.isoformat()},
-        "end": {"dateTime": end.isoformat()},
+        "start": _event_time(start),
+        "end": _event_time(end),
     }
     return service.events().patch(calendarId=calendar_id, eventId=event_id, body=body).execute()
 

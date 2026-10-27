@@ -227,8 +227,8 @@ class CreateEventTests(unittest.TestCase):
             calendarId="fam@example.com",
             body={
                 "summary": "call vet",
-                "start": {"dateTime": start.isoformat()},
-                "end": {"dateTime": end.isoformat()},
+                "start": {"dateTime": "2026-07-23T13:00:00-04:00", "timeZone": "America/New_York"},
+                "end": {"dateTime": "2026-07-23T13:30:00-04:00", "timeZone": "America/New_York"},
             },
         )
 
@@ -246,8 +246,8 @@ class CreateEventTests(unittest.TestCase):
             calendarId="fam@example.com",
             body={
                 "summary": "call vet",
-                "start": {"dateTime": start.isoformat()},
-                "end": {"dateTime": end.isoformat()},
+                "start": {"dateTime": "2026-07-23T13:00:00-04:00", "timeZone": "America/New_York"},
+                "end": {"dateTime": "2026-07-23T13:30:00-04:00", "timeZone": "America/New_York"},
             },
         )
 
@@ -305,8 +305,8 @@ class UpdateEventTests(unittest.TestCase):
             calendarId="fam@example.com",
             eventId="event-123",
             body={
-                "start": {"dateTime": start.isoformat()},
-                "end": {"dateTime": end.isoformat()},
+                "start": {"dateTime": "2026-07-23T13:00:00-04:00", "timeZone": "America/New_York"},
+                "end": {"dateTime": "2026-07-23T13:30:00-04:00", "timeZone": "America/New_York"},
             },
         )
 
@@ -324,8 +324,8 @@ class UpdateEventTests(unittest.TestCase):
             calendarId="fam@example.com",
             eventId="event-123",
             body={
-                "start": {"dateTime": start.isoformat()},
-                "end": {"dateTime": end.isoformat()},
+                "start": {"dateTime": "2026-07-23T13:00:00-04:00", "timeZone": "America/New_York"},
+                "end": {"dateTime": "2026-07-23T13:30:00-04:00", "timeZone": "America/New_York"},
             },
         )
 

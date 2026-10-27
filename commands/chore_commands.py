@@ -1,6 +1,5 @@
 import os
 from datetime import datetime, time, timedelta
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import discord
 from discord import app_commands
@@ -32,20 +31,11 @@ from services.database import (
     undo_last_done,
 )
 from services.schedule import previous_week_start
+from services.timezone import household_timezone
 from services.weekly_digest_embed import build_weekly_digest_embed
 
 
-def _household_timezone():
-    timezone_name = os.getenv("HOUSEHOLD_TIMEZONE", "America/New_York")
-    try:
-        return ZoneInfo(timezone_name)
-    except ZoneInfoNotFoundError:
-        # Windows has no built-in IANA timezone database; fall back to the
-        # system's local offset rather than retrying the same failed lookup.
-        return datetime.now().astimezone().tzinfo
-
-
-HOUSEHOLD_TZ = _household_timezone()
+HOUSEHOLD_TZ = household_timezone()
 NUDGE_TIMES = [time(9, 0, tzinfo=HOUSEHOLD_TZ), time(17, 0, tzinfo=HOUSEHOLD_TZ)]
 WEEKLY_DIGEST_TIME = time(20, 0, tzinfo=HOUSEHOLD_TZ)  # checked daily, only posts on Sunday
 WEEKLY_DIGEST_WEEKDAY = 6  # Sunday, per date.weekday() (Monday=0 ... Sunday=6)

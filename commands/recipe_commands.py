@@ -4,7 +4,6 @@ import logging
 import os
 import sqlite3
 from datetime import datetime
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import discord
 from discord import app_commands
@@ -55,6 +54,7 @@ from services.journal import build_journal_embed
 from services.recipe_tags import generate_recipe_tags
 from services.scraper import scrape_recipe
 from services.time_parser import parse_minutes
+from services.timezone import household_timezone
 
 
 logger = logging.getLogger(__name__)
@@ -178,15 +178,7 @@ class RecipeReviewModal(discord.ui.Modal):
             )
             await self.thread.edit(applied_tags=updated_tags)
 
-            timezone_name = os.getenv("HOUSEHOLD_TIMEZONE", "America/New_York")
-            try:
-                timezone = ZoneInfo(timezone_name)
-            except ZoneInfoNotFoundError:
-                # Windows has no built-in IANA timezone database (the `tzdata`
-                # package provides it); fall back to the system's local offset
-                # rather than retrying the same lookup that just failed.
-                timezone = datetime.now().astimezone().tzinfo
-            made_at = datetime.now(timezone)
+            made_at = datetime.now(household_timezone())
             # Made Before / Make Again / Favorite only make sense if you made
             # it; only "Needs Review" can mean you revisited it without cooking.
             activity = "Made" if self.status_key != "needs_review" else "Reviewed"
