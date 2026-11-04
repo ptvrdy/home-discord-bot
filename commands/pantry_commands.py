@@ -60,7 +60,9 @@ from services.pantry import (
     put_away,
     recipe_consumption,
     group_restock_by_list,
+    import_order,
     merge_duplicate,
+    plan_order_import,
     plan_restock,
     store_id,
     store_names,
@@ -85,6 +87,7 @@ from services.pantry_embed import (
 )
 from services.pantry_parser import ADD, CONSUME, CONSUME_ALL, FREEZE, PantryAction, parse_pantry_message
 from services.backup import BACKUP_DIR
+from services.order_import import clean_title, parse_order_text
 from services.pantry_status import (
     FAIL,
     OFF,
@@ -372,6 +375,106 @@ class PutAwayView(discord.ui.View):
             self.add_item(ToggleButton(item.label(), item))
         self.add_item(ConfirmPutAwayButton(list_id, store))
         self.add_item(CancelButton())
+
+
+# --- imported delivery orders (Shipt / Target) ---
+
+ORDER_PASTE_LIMIT = 4000  # Discord's cap on a modal text box
+ORDER_FILE_LIMIT = 200_000
+
+
+class ConfirmOrderButton(discord.ui.Button):
+    def __init__(self, store: str):
+        super().__init__(label="Add to Pantry", style=discord.ButtonStyle.primary)
+        self.store = store
+
+    async def callback(self, interaction: discord.Interaction):
+        if not await _claim(self.view, interaction):
+            return
+        chosen = _checked_payloads(self.view)
+        if not chosen:
+            await interaction.response.edit_message(content="Nothing selected — nothing added.", view=None)
+            return
+        await interaction.response.defer()
+        try:
+            async with Grocy() as grocy:
+                state = await load_state(grocy)
+                result = await import_order(grocy, state, chosen, self.store, interaction.user.display_name)
+        except (GrocyError, GrocyNotConfigured) as error:
+            await interaction.edit_original_response(content=f"❌ I couldn't reach the pantry: {error}", view=None)
+            return
+        chunks = chunk_lines([f"🧾 Added from **{self.store}**:"] + result.lines)
+        await interaction.edit_original_response(content=chunks[0], view=ResultView(result.transactions))
+        for chunk in chunks[1:]:
+            await interaction.followup.send(chunk, ephemeral=True)
+        await refresh_this_week_if_stale(interaction.client)
+
+
+class OrderImportView(discord.ui.View):
+    def __init__(self, lines: list, store: str):
+        super().__init__(timeout=1800)
+        for line in lines[:PUT_AWAY_BUTTON_LIMIT]:
+            # Items that weren't picked (no price in the order) start unchecked.
+            self.add_item(ToggleButton(line.label(), line, checked=line.item.received))
+        self.add_item(ConfirmOrderButton(store))
+        self.add_item(CancelButton())
+
+
+class OrderPasteModal(discord.ui.Modal, title="Import a grocery order"):
+    def __init__(self, store: str):
+        super().__init__()
+        self.store = store
+        self.order = discord.ui.TextInput(
+            label="Paste the order (names, prices, Qty)",
+            style=discord.TextStyle.paragraph,
+            placeholder="Chobani Plain Nonfat Greek Yogurt - 32oz\n$6.59 unit price\nQty 1\n...",
+            max_length=ORDER_PASTE_LIMIT,
+        )
+        self.add_item(self.order)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await send_order_import(interaction, self.order.value, self.store)
+
+
+async def send_order_import(interaction: discord.Interaction, text: str, store: str) -> None:
+    """Parse a pasted order and send the checklist(s). Expects a deferred interaction."""
+    items = parse_order_text(text)
+    if not items:
+        await interaction.followup.send(
+            "🤔 I couldn't find any items. I'm looking for each item's name, then a line like "
+            "`$4.99 unit price`, then `Qty 1` — the way Shipt/Target order pages list them.",
+            ephemeral=True,
+        )
+        return
+    try:
+        async with Grocy() as grocy:
+            state = await load_state(grocy)
+    except (GrocyError, GrocyNotConfigured) as error:
+        await interaction.followup.send(f"❌ I couldn't reach the pantry: {error}", ephemeral=True)
+        return
+
+    lines = plan_order_import(items, state)
+    header = [
+        f"🧾 **{len(items)} items** from **{store}** — uncheck anything that didn't arrive, then **Add to Pantry**. "
+        "Prices are what you paid; quantities are from the order."
+    ]
+    replaced = [item for item in items if item.replaced]
+    if replaced:
+        header.append("Substitutions:")
+        header += [f"• got **{item.title}** instead of {clean_title(item.replaced)}" for item in replaced]
+    for chunk in chunk_lines(header):
+        await interaction.followup.send(chunk, ephemeral=True)
+
+    batches = [lines[start:start + PUT_AWAY_BUTTON_LIMIT] for start in range(0, len(lines), PUT_AWAY_BUTTON_LIMIT)]
+    for number, batch in enumerate(batches, start=1):
+        note = f"Part {number} of {len(batches)}:" if len(batches) > 1 else "Items:"
+        await interaction.followup.send(note, view=OrderImportView(batch, store), ephemeral=True)
+
+
+async def order_store_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    names = ["Target"] + [name for name in store_lists() if name != "Target"]
+    return [app_commands.Choice(name=name, value=name) for name in names if current.lower() in name.lower()][:25]
 
 
 class ConfirmConsumeButton(discord.ui.Button):
@@ -1238,6 +1341,32 @@ class Pantry(commands.Cog):
         await refresh_this_week_if_stale(self.bot)
 
     # --- what's in stock / what can I make ---
+
+    @app_commands.command(name="import_order", description="Add a delivery order (Shipt/Target) to the pantry")
+    @app_commands.describe(
+        store="Where it's from (default: Target)",
+        order_file="Optional: the order as a .txt file - for orders too long to paste (over 4,000 characters)",
+    )
+    @app_commands.autocomplete(store=order_store_autocomplete)
+    async def import_order_command(
+        self,
+        interaction: discord.Interaction,
+        store: str = "Target",
+        order_file: discord.Attachment | None = None,
+    ):
+        if not grocy_configured():
+            await interaction.response.send_message(NOT_CONFIGURED_MESSAGE, ephemeral=True)
+            return
+        store = match_store(store) or store.strip() or "Target"
+        if order_file is None:
+            await interaction.response.send_modal(OrderPasteModal(store))
+            return
+        if order_file.size > ORDER_FILE_LIMIT:
+            await interaction.response.send_message("❌ That file's too big to be an order.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        text = (await order_file.read()).decode("utf-8", errors="replace")
+        await send_order_import(interaction, text, store)
 
     @app_commands.command(name="in_stock", description="See what's in the pantry")
     async def in_stock(self, interaction: discord.Interaction):

@@ -233,6 +233,7 @@ HELP_SECTIONS = [
         "🥫 Pantry",
         [
             ("/put_away", "Add what you crossed off in OurGroceries to the pantry - uncheck anything you didn't buy."),
+            ("/import_order [store]", "Paste a Shipt/Target order: adds every item with its price and quantity."),
             ("/pantry <update>", "Plain English: \"used 4 eggs, finished the milk\". Or just type in #pantry."),
             ("/what_can_i_make [tag]", "Recipes ranked by what's already in stock."),
             ("/in_stock", "See what's in the pantry and what to use soon."),

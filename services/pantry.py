@@ -40,6 +40,7 @@ from services.ingredient_match import (
     parse_quantity,
     rank_matches,
 )
+from services.order_import import OrderItem
 from services.pantry_embed import cook_this_week_field_value, expiring_field_value, score_recipes
 from services.pantry_parser import ADD, CONSUME_ALL, FREEZE, OPEN, SPOIL, PantryAction
 from services.tj_catalog import barcodes_for_sku, download_product_photo, sku_from_barcode
@@ -177,10 +178,13 @@ async def create_product(
     text: str,
     tj_item: dict | None,
     created_by: str | None = None,
+    name: str | None = None,
 ) -> dict:
     """Create a generic pantry product for free text like "chicken thighs",
     filled in from its TJ's match: photo, product group, home location, and
-    default shelf life. Adds it to `state` and learns the alias."""
+    default shelf life. Adds it to `state` and learns the alias. `name`
+    overrides the generic name (an imported order keeps the product's real
+    name, e.g. "Fleischmann's RapidRise Yeast")."""
     setup = await ensure_setup(grocy)
     if tj_item:
         category, subcategory = tj_item.get("category"), tj_item.get("subcategory")
@@ -189,7 +193,7 @@ async def create_product(
         # basic produce) - still get the aisle right from keywords.
         category, subcategory = guess_category(item_words(text), frozen=bool(re.search(r"\bfrozen\b", text.lower())))
     rule = shelf_life_for(category, subcategory)
-    name = display_name(text)
+    name = name or display_name(text)
 
     data = {
         "name": name,
@@ -555,6 +559,71 @@ async def put_away(
         state.stock[product["id"]] = state.amount(product["id"]) + 1
         result.lines.append(f"• {product['name']}" + (" _(new)_" if not item.product else ""))
         result.done.append(item)
+    return result
+
+
+# --- imported delivery orders (Shipt / Target) ---
+
+
+@dataclass
+class OrderLine:
+    """One item from an imported order and what Rosie thinks it is."""
+
+    item: OrderItem
+    product: dict | None  # an existing pantry product, if confidently matched
+
+    def label(self) -> str:
+        amount = f" ×{self.item.quantity:g}" if self.item.quantity != 1 else ""
+        price = f" · ${self.item.price:.2f}" if self.item.price is not None else " · not in the order"
+        target = f" → {self.product['name']}" if self.product and normalize_item(self.product["name"]) != normalize_item(self.item.title) else ""
+        new = " (new)" if not self.product else ""
+        # The price and quantity matter most, so the title is what gets cut.
+        tail = f"{amount}{target}{new}{price}"
+        return f"{self.item.title[: max(20, 76 - len(tail))]}{tail}"
+
+
+def plan_order_import(items: list[OrderItem], state: PantryState) -> list[OrderLine]:
+    """Match each ordered item to a pantry product when it's confidently the
+    same thing (Bounty Select-A-Size Paper Towels -> your "Paper towels")."""
+    lines = []
+    for item in items:
+        match = state.match(item.title)
+        lines.append(OrderLine(item, match.item if match and match.score >= CONFIDENT_SCORE else None))
+    return lines
+
+
+async def import_order(
+    grocy: Grocy,
+    state: PantryState,
+    lines: list[OrderLine],
+    store: str,
+    created_by: str | None = None,
+) -> PutAwayResult:
+    """Add each chosen order line to stock at its quantity and the unit price
+    actually paid, recorded at `store`. New items are created under their
+    real name with a section/location/shelf life guessed from it (frozen
+    things to the freezer). Same reporting as put-away: one failure doesn't
+    stop the rest, and everything added can be undone."""
+    result = PutAwayResult([], [], [])
+    location = await store_id(grocy, store)
+    for line in lines:
+        item = line.item
+        try:
+            product = line.product or await create_product(
+                grocy, state, item.raw, None, created_by, name=item.title
+            )
+            if line.product:
+                learn(item.title, product["id"], created_by)
+            result.transactions.append(
+                await grocy.add_stock(product["id"], item.quantity, price=item.price, store_id=location)
+            )
+        except GrocyError as error:
+            result.lines.append(f"❌ {item.title}: {error}")
+            continue
+        state.stock[product["id"]] = state.amount(product["id"]) + item.quantity
+        amount = f" ×{item.quantity:g}" if item.quantity != 1 else ""
+        result.lines.append(f"• {product['name']}{amount}" + (" _(new)_" if not line.product else ""))
+        result.done.append(line)
     return result
 
 

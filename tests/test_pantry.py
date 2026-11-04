@@ -345,6 +345,40 @@ class RestockPlanTests(unittest.TestCase):
         self.assertEqual(pantry.preferred_list(lists[:1], None)["id"], "a")
 
 
+class OrderImportTests(PantryTestCase):
+    async def test_matches_existing_creates_new_and_records_price_qty_store(self):
+        from services.order_import import parse_order_text
+
+        grocy, state = _grocy(), _state()
+        state.products.append({"id": 5, "name": "Paper towels", "location_id": 30})
+        items = parse_order_text(
+            "Bounty Select-A-Size Paper Towels - 12 Triple Rolls\n$29.99 unit price\nQty 1\n\n"
+            "Golden Sweet Whole Kernel Corn - 15.25oz - Good &#38; Gather&#8482;\n$0.59 unit price\nQty 2\n"
+        )
+        lines = pantry.plan_order_import(items, state)
+        self.assertEqual(lines[0].product["id"], 5)  # onto the existing paper towels
+        self.assertIsNone(lines[1].product)
+        self.assertEqual(lines[0].label(), "Bounty Select-A-Size Paper Towels → Paper towels · $29.99")
+        self.assertEqual(lines[1].label(), "Golden Sweet Whole Kernel Corn ×2 (new) · $0.59")
+
+        result = await pantry.import_order(grocy, state, lines, "Target", "Sam")
+
+        grocy.create_object.assert_any_await("shopping_locations", {"name": "Target"})
+        product_data = next(call.args[1] for call in grocy.create_object.await_args_list if call.args[0] == "products")
+        self.assertEqual(product_data["name"], "Golden Sweet Whole Kernel Corn")  # real name, not "Golden sweet kernel corn"
+        self.assertEqual(
+            [call.args + (call.kwargs["price"],) for call in grocy.add_stock.await_args_list],
+            [(5, 1.0, 29.99), (99, 2.0, 0.59)],
+        )
+        self.assertEqual(result.lines, ["• Paper towels", "• Golden Sweet Whole Kernel Corn ×2 _(new)_"])
+
+    def test_labels_fit_discord(self):
+        from services.order_import import OrderItem
+
+        long = OrderItem("Pacific Foods Organic Gluten Free Creamy Tomato Soup With A Very Long Name Indeed", 3.49, 12)
+        self.assertLessEqual(len(pantry.OrderLine(long, None).label()) + 2, 80)  # +2 for the checkbox
+
+
 class ApplyActionTests(PantryTestCase):
     async def test_consume_specific_amount(self):
         grocy, state = _grocy(), _state()

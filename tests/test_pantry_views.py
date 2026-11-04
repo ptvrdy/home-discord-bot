@@ -114,6 +114,28 @@ class MergeViewTests(ViewLimitsMixin, unittest.IsolatedAsyncioTestCase):
         self.assertIn("Pasture Raised Large Brown Eggs", merge_prompt(suggestion))
 
 
+class OrderImportViewTests(ViewLimitsMixin, unittest.IsolatedAsyncioTestCase):
+    async def test_real_order_fits_and_unpicked_items_start_unchecked(self):
+        from pathlib import Path
+        from commands.pantry_commands import OrderImportView, OrderPasteModal
+        from services.order_import import OrderItem, parse_order_text
+        from services.pantry import OrderLine
+
+        text = (Path(__file__).parent / "fixtures" / "shipt_target_order.txt").read_text(encoding="utf-8")
+        lines = [OrderLine(item, None) for item in parse_order_text(text)]
+        lines.append(OrderLine(OrderItem("Something not in the order"), None))  # no price
+        buttons = self.assertSendable(OrderImportView(lines, "Target"))
+        self.assertEqual(len(buttons), 25)  # 23 items + Add + Cancel; the rest go in a second message
+        self.assertTrue(buttons[0]["label"].startswith("✅"))
+
+        unpicked = self.assertSendable(OrderImportView(lines[-1:], "Target"))
+        self.assertTrue(unpicked[0]["label"].startswith("⬜"))
+
+        modal = OrderPasteModal("Target")
+        self.assertLessEqual(len(modal.order.label), 45)
+        self.assertLessEqual(len(modal.order.placeholder), 100)
+
+
 class RestockLowItemsTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.channel = MagicMock()
