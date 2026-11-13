@@ -978,6 +978,23 @@ def mark_task_completed(
         return dict(row)
 
 
+def get_open_booked_tasks(database_path: Path = DATABASE_PATH) -> list[dict]:
+    """Every /task or /week booking that hasn't been marked done (no ✅ yet),
+    oldest booking first - the "still to do" list behind the journal widget."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT task_name, event_id, calendar_id, booked_at, booked_by
+            FROM booked_tasks
+            WHERE completed_at IS NULL
+            ORDER BY booked_at ASC
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
 def delete_booked_task(message_id: int, database_path: Path = DATABASE_PATH) -> None:
     """Forget a booked task - used when its calendar event is undone, so a
     stale message can no longer be marked completed or edited."""

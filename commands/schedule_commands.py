@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from datetime import datetime, time, timedelta
 
@@ -31,6 +32,7 @@ from services.google_calendar import (
     rename_event,
     update_event,
 )
+from services.journal_export import export_if_configured
 from services.schedule import (
     WEEKDAYS,
     find_slots,
@@ -71,10 +73,21 @@ def _office_days_this_week(events: list[dict], week_start) -> set:
     return office_days_in_week(events, week_start, names)
 
 
+logger = logging.getLogger(__name__)
+
+
 async def refresh_this_week(bot: commands.Bot) -> None:
     """Rebuild and post/edit the single #this-week embed. Shared by the daily
     background refresh and the manual /refresh_this_week command so both
     paths can never drift out of sync."""
+    # Keep the journal's "Rosie tasks" widget current: this runs after every
+    # booking / completion / edit. Off unless JOURNAL_DASHBOARD_DIR is set,
+    # off the event loop (calendar lookups + a file write), and never fatal.
+    try:
+        await asyncio.to_thread(export_if_configured)
+    except Exception as error:
+        logger.warning("Couldn't update the journal's Rosie tasks widget: %s", error)
+
     channel_id = os.getenv("THIS_WEEK_CHANNEL_ID")
     if not channel_id:
         return
