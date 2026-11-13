@@ -19,6 +19,10 @@ Run `/help` in Discord any time for a categorized list of every command, or see
     most sites. NYT Cooking gets a fallback scraper
     ([`services/nyt_fallback.py`](services/nyt_fallback.py)) that reads the page
     directly, since `recipe_scrapers` currently misses NYT's `legacyTime` field.
+    Pages are downloaded with `httpx` ([`fetch_recipe_html`](services/scraper.py))
+    rather than the library's built-in `scrape_me()`: that uses plain `urllib`,
+    which can't decompress, and NYT Cooking now replies with gzip even when it
+    isn't asked to, so every NYT import used to crash decoding the raw bytes.
   - If the URL is a TikTok link, opens a two-step hand-entry modal directly —
     name/ingredients/instructions/image/source URL, then prep/cook/total time and
     servings — producing the exact same `Recipe` object, fields, tags, and card
