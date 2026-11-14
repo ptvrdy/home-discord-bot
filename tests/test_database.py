@@ -28,6 +28,7 @@ from services.database import (
     get_recipe_by_url,
     get_recipe_tags,
     get_recipes_needing_review,
+    get_open_booked_tasks,
     get_open_wishlist_items,
     get_state,
     get_wishlist_item,
@@ -936,6 +937,28 @@ class BookedTaskTests(unittest.TestCase):
             self.assertIsNone(second)
             task = get_booked_task(111, database_path)
             self.assertEqual(task["completed_by"], "Joe")
+
+    def test_open_booked_tasks_lists_only_unfinished_ones_with_their_message_ids(self):
+        # The catch-up sweep needs message_id/channel_id to find each task's
+        # confirmation message again.
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            record_booked_task(
+                111, 222, "call vet", "event-1", "fam@example.com",
+                datetime(2026, 8, 10, tzinfo=timezone.utc), "Peyton", database_path,
+            )
+            record_booked_task(
+                333, 444, "buy dog food", "event-2", "fam@example.com",
+                datetime(2026, 8, 11, tzinfo=timezone.utc), "Joe", database_path,
+            )
+            mark_task_completed(111, datetime(2026, 8, 12, tzinfo=timezone.utc), "Joe", database_path)
+
+            open_tasks = get_open_booked_tasks(database_path)
+
+            self.assertEqual([task["task_name"] for task in open_tasks], ["buy dog food"])
+            self.assertEqual(open_tasks[0]["message_id"], 333)
+            self.assertEqual(open_tasks[0]["channel_id"], 444)
 
     def test_delete_booked_task_removes_it(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

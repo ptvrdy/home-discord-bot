@@ -267,6 +267,16 @@ commands are confined to that channel; otherwise they work anywhere.
   Calendar since it was booked (found by its event ID, which a reschedule
   doesn't change), completing it still shows accurate, current information
   instead of stale text from whenever it was first proposed.
+- **Missed ✅ catch-up.** Discord reports a reaction to Rosie exactly once, at the
+  instant it's added, so a ✅ that lands while she's restarting, reconnecting or
+  busy would otherwise be lost for good — the task would sit open even though
+  someone had checked it. So at startup and then every 30 minutes she re-reads
+  the confirmation messages of tasks booked in the last 14 days that are still
+  open, and completes any that a person has ✅'d (her own pre-added ✅ doesn't
+  count), exactly as if she'd seen the reaction live. Older tasks are left alone
+  on purpose: completing a months-old backlog "now" would credit all of it to
+  whichever week the sweep ran in; for those, add a fresh ✅ yourself and the
+  live handler picks it up.
 - To change an already-booked task's time or duration without cancelling and
   redoing it, right-click (or long-press on mobile) its confirmation message →
   **Apps → Edit Task Time**. A form asks for a new time, optionally a new day

@@ -980,13 +980,15 @@ def mark_task_completed(
 
 def get_open_booked_tasks(database_path: Path = DATABASE_PATH) -> list[dict]:
     """Every /task or /week booking that hasn't been marked done (no ✅ yet),
-    oldest booking first - the "still to do" list behind the journal widget."""
+    oldest booking first - the "still to do" list behind the journal widget,
+    and what the catch-up sweep re-checks for a ✅ Rosie missed (hence the
+    message/channel IDs)."""
     initialize_database(database_path)
     with _database_connection(database_path) as connection:
         connection.row_factory = sqlite3.Row
         rows = connection.execute(
             """
-            SELECT task_name, event_id, calendar_id, booked_at, booked_by
+            SELECT message_id, channel_id, task_name, event_id, calendar_id, booked_at, booked_by
             FROM booked_tasks
             WHERE completed_at IS NULL
             ORDER BY booked_at ASC

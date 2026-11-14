@@ -15,6 +15,7 @@ from services.database import (
     get_booked_task,
     get_chore_log_entries,
     get_meal_plan_items,
+    get_open_booked_tasks,
     get_state,
     mark_task_completed,
     record_booked_task,
@@ -48,6 +49,7 @@ from services.schedule import (
 )
 from services.grocy import Grocy, GrocyError, grocy_configured
 from services.pantry import THIS_WEEK_PANTRY_STATE_KEY, ThisWeekPantry, this_week_pantry
+from services.task_sweep import recent_open_tasks
 from services.this_week_embed import build_this_week_embed
 
 
@@ -528,13 +530,110 @@ class EditTaskModal(discord.ui.Modal, title="Edit Task Time"):
         await interaction.followup.send("✅ Task rescheduled.", ephemeral=True)
 
 
+# How far back the catch-up sweep looks, and how often. Only recent tasks are
+# swept - see services/task_sweep.py for why older ones are left alone.
+CATCH_UP_WINDOW_DAYS = 14
+CATCH_UP_INTERVAL_MINUTES = 30
+
+
+async def complete_booked_task(bot, channel, task: dict, completed_by: str) -> bool:
+    """Mark a booked task done and reflect that everywhere: the database, the
+    confirmation message, the calendar event's title, and #this-week. Shared
+    by the live ✅ handler and the catch-up sweep so they can never drift.
+    Returns False if it was already completed (so two paths racing - the live
+    event and the sweep - can't both act on one task)."""
+    result = mark_task_completed(task["message_id"], datetime.now(HOUSEHOLD_TZ), completed_by)
+    if result is None:
+        return False
+
+    # Re-fetch the event's current date/time rather than trusting the
+    # original confirmation message's text, which goes stale if the
+    # task was manually rescheduled in Google Calendar after being
+    # booked - without this, the completion message would keep
+    # whatever day it was originally proposed for, even if that's not
+    # when it actually got done.
+    when = ""
+    try:
+        raw_event = await asyncio.to_thread(get_event, task["event_id"], calendar_id=task["calendar_id"])
+        current = normalize_event(raw_event, "current", household_tz=HOUSEHOLD_TZ)
+        if isinstance(current["start"], datetime):
+            when = f" — {format_day_label(current['start'].date())} at {format_time(current['start'])}"
+    except Exception:
+        pass  # not fatal - just skip the date detail if the event can't be fetched
+
+    try:
+        message = await channel.fetch_message(task["message_id"])
+        await message.edit(
+            content=f"✅ **{task['task_name']}**{when} — marked done by {completed_by}.",
+            view=None,
+        )
+    except discord.HTTPException:
+        pass
+
+    try:
+        await asyncio.to_thread(
+            rename_event, task["event_id"], f"✅ {task['task_name']}", calendar_id=task["calendar_id"]
+        )
+    except Exception:
+        pass  # not fatal - the Discord message and booked_tasks record still reflect completion
+    await refresh_this_week(bot)
+    return True
+
+
+async def catch_up_task(bot, task: dict) -> bool:
+    """If a person has ✅'d this task's confirmation message but Rosie never
+    acted on it (Discord only reports a reaction once, at the instant it's
+    added, so one that lands while she's restarting, reconnecting or busy is
+    lost), complete the task now. Returns True if it did."""
+    channel = bot.get_channel(task["channel_id"])
+    if not isinstance(channel, discord.abc.Messageable):
+        return False
+
+    try:
+        message = await channel.fetch_message(task["message_id"])
+    except discord.NotFound:
+        return False  # the message was deleted - there's nothing to react on
+
+    reaction = discord.utils.get(message.reactions, emoji="✅")
+    if reaction is None:
+        return False
+
+    async for user in reaction.users():
+        if user.bot:
+            continue  # Rosie's own pre-added ✅ doesn't count
+        return await complete_booked_task(bot, channel, task, user.display_name)
+    return False
+
+
 class Schedule(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.refresh_this_week_task.start()
+        self.catch_up_missed_reactions.start()
 
     def cog_unload(self):
         self.refresh_this_week_task.cancel()
+        self.catch_up_missed_reactions.cancel()
+
+    @tasks.loop(minutes=CATCH_UP_INTERVAL_MINUTES)
+    async def catch_up_missed_reactions(self):
+        # Runs once at startup (so anything missed while Rosie was down is
+        # healed right away) and then every half hour. Everything is wrapped:
+        # an unhandled error would silently stop a tasks.loop for good.
+        try:
+            now = datetime.now(HOUSEHOLD_TZ)
+            for task in recent_open_tasks(get_open_booked_tasks(), now, CATCH_UP_WINDOW_DAYS):
+                try:
+                    if await catch_up_task(self.bot, task):
+                        logger.info("Completed %r from a ✅ Rosie had missed", task["task_name"])
+                except Exception:
+                    logger.exception("Catch-up check failed for %r", task["task_name"])
+        except Exception:
+            logger.exception("Catch-up sweep failed")
+
+    @catch_up_missed_reactions.before_loop
+    async def before_catch_up_missed_reactions(self):
+        await self.bot.wait_until_ready()
 
     @tasks.loop(time=THIS_WEEK_REFRESH_TIME)
     async def refresh_this_week_task(self):
@@ -570,41 +669,7 @@ class Schedule(commands.Cog):
         # members and silently misses everyone else.
         completed_by = payload.member.display_name if payload.member else "someone"
 
-        result = mark_task_completed(payload.message_id, datetime.now(HOUSEHOLD_TZ), completed_by)
-        if result is None:
-            return  # already marked completed - don't re-fire on a second reaction
-
-        # Re-fetch the event's current date/time rather than trusting the
-        # original confirmation message's text, which goes stale if the
-        # task was manually rescheduled in Google Calendar after being
-        # booked - without this, the completion message would keep
-        # whatever day it was originally proposed for, even if that's not
-        # when it actually got done.
-        when = ""
-        try:
-            raw_event = get_event(task["event_id"], calendar_id=task["calendar_id"])
-            current = normalize_event(raw_event, "current", household_tz=HOUSEHOLD_TZ)
-            if isinstance(current["start"], datetime):
-                when = f" — {format_day_label(current['start'].date())} at {format_time(current['start'])}"
-        except Exception:
-            pass  # not fatal - just skip the date detail if the event can't be fetched
-
-        try:
-            message = await channel.fetch_message(payload.message_id)
-            await message.edit(
-                content=f"✅ **{task['task_name']}**{when} — marked done by {completed_by}.",
-                view=None,
-            )
-        except discord.HTTPException:
-            pass
-
-        try:
-            rename_event(
-                task["event_id"], f"✅ {task['task_name']}", calendar_id=task["calendar_id"]
-            )
-        except Exception:
-            pass  # not fatal - the Discord message and booked_tasks record still reflect completion
-        await refresh_this_week(self.bot)
+        await complete_booked_task(self.bot, channel, task, completed_by)
 
     @app_commands.command(
         name="refresh_this_week",
