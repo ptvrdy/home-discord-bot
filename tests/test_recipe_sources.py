@@ -34,7 +34,7 @@ class PlanSourceFixTests(unittest.TestCase):
         self.assertEqual(plan_source_fix(other, YOUTUBE), SourceFix("YouTube", other))
 
     def test_an_unrecognised_site_in_the_name_slot_still_gets_its_link_restored(self):
-        site = "https://www.organizeyourselfskinny.com/tuna-salad/"
+        site = "https://www.somenewblog.example/tuna-salad/"
         self.assertEqual(plan_source_fix("", site), SourceFix(None, site))
 
     def test_a_name_someone_chose_is_never_overwritten(self):
@@ -43,7 +43,7 @@ class PlanSourceFixTests(unittest.TestCase):
                 self.assertIsNone(plan_source_fix(YOUTUBE, name))
 
     def test_a_link_from_an_unknown_site_with_no_name_is_left_alone(self):
-        self.assertIsNone(plan_source_fix("https://www.organizeyourselfskinny.com/tuna-salad/", None))
+        self.assertIsNone(plan_source_fix("https://www.somenewblog.example/tuna-salad/", None))
 
     def test_nothing_to_fix(self):
         self.assertIsNone(plan_source_fix("", None))

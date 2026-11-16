@@ -120,8 +120,19 @@ class GetSourceNameTests(unittest.TestCase):
         self.assertEqual(get_source_name("https://allrecipes.com/recipe/1"), "AllRecipes")
         self.assertEqual(get_source_name("https://www.seriouseats.com/x"), "Serious Eats")
 
+    def test_the_food_blogs_from_the_household_recipe_box(self):
+        for url, name in [
+            ("https://www.organizeyourselfskinny.com/tuna-salad/", "Organize Yourself Skinny"),
+            ("https://sallysbakingaddiction.com/sandwich-bread/", "Sally's Baking Addiction"),
+            ("https://www.damndelicious.net/quinoa-chili/", "Damn Delicious"),
+            ("https://thecountrycook.net/marry-me-chicken/", "The Country Cook"),
+            ("https://www.thetoastykitchen.com/brown-gravy/", "The Toasty Kitchen"),
+        ]:
+            with self.subTest(url=url):
+                self.assertEqual(get_source_name(url), name)
+
     def test_unknown_sites_have_no_name(self):
-        self.assertIsNone(get_source_name("https://www.organizeyourselfskinny.com/tuna-salad/"))
+        self.assertIsNone(get_source_name("https://www.somenewblog.example/tuna-salad/"))
 
     def test_a_lookalike_domain_is_not_mistaken_for_youtube(self):
         for url in ["https://notyoutube.com/watch", "https://youtube.com.evil.example/watch", "https://example.com/youtube.com"]:

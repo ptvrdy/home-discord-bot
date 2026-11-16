@@ -250,10 +250,10 @@ class FixSourcesCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("already labelled", sent)
 
     async def test_lists_sites_it_has_no_name_for_even_when_nothing_needs_fixing(self):
-        row = _row(10, url="https://www.organizeyourselfskinny.com/tuna/", title="Tuna Salad")
+        row = _row(10, url="https://www.somenewblog.example/tuna/", title="Tuna Salad")
         events, sent = await self._invoke([row], {10: _thread(10)})
         self.assertEqual(events, [])
-        self.assertIn("organizeyourselfskinny.com", sent)
+        self.assertIn("somenewblog.example", sent)
         self.assertIn("Tuna Salad", sent)
 
     async def test_stops_at_the_batch_limit_and_says_to_run_again(self):
