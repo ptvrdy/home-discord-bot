@@ -9,12 +9,15 @@ import discord
 from commands import recipe_commands, recipe_sync_commands
 from commands.recipe_commands import NoLinkRecipeModal, ManualRecipeModal, reply_to_final_step
 from commands.recipe_sync_commands import (
-    FIX_SOURCES_BATCH, ForgetButton, ReimportView, RecipeSync, edit_card, post_is_gone,
+    FIX_SOURCES_BATCH, ForgetButton, ReimportView, RebuildJournalsButton, RecipeSync, edit_card,
+    find_missing_journals, journal_is_missing, post_is_gone, restore_journal,
 )
 from models.recipe_card import Recipe
 from services.database import (
     add_cooking_log,
     delete_recipe_by_thread,
+    get_journaled_recipes,
+    set_journal_message_id,
     get_recipe_by_thread,
     get_recipe_sources,
     get_recipe_tags,
@@ -343,6 +346,91 @@ class ForgetButtonTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(ReimportView([], [{"discord_thread_id": 1, "title": "x"}]).children), 1)
         self.assertEqual(len(ReimportView([7], []).children), 1)
         self.assertEqual(len(ReimportView([7], [{"discord_thread_id": 1, "title": "x"}]).children), 2)
+
+
+class JournaledRecipesDatabaseTests(unittest.TestCase):
+    def test_only_recipes_with_reviews_are_listed_with_their_message_id(self):
+        import datetime as dt
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "recipes.db"
+            for title, thread in [("Reviewed", 1), ("Never reviewed", 2), ("Reviewed, never posted", 3)]:
+                save_recipe(Recipe(title=title, ingredients=["a"], instructions="b",
+                                   source_url="", tags=["needs_review"]), thread, path)
+            for thread in (1, 3):
+                add_cooking_log(thread, dt.datetime(2026, 7, 1, tzinfo=dt.timezone.utc),
+                                "Made", "favorite", "n", "t", 5, "Peyton", path)
+            set_journal_message_id(1, 999, path)
+
+            rows = get_journaled_recipes(path)
+        self.assertEqual(
+            [(r["discord_thread_id"], r["journal_message_id"]) for r in rows], [(1, 999), (3, None)]
+        )
+
+
+def _http_error(status):
+    return discord.HTTPException(MagicMock(status=status), "x")
+
+
+class JournalDetectionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_a_deleted_message_is_missing(self):
+        thread = _thread()
+        thread.fetch_message.side_effect = discord.NotFound(MagicMock(status=404), "gone")
+        self.assertTrue(await journal_is_missing(thread, 99))
+
+    async def test_a_message_that_was_never_posted_is_missing(self):
+        self.assertTrue(await journal_is_missing(_thread(), None))
+
+    async def test_a_present_message_is_not_missing(self):
+        self.assertFalse(await journal_is_missing(_thread(), 99))
+
+    async def test_a_failed_lookup_is_not_treated_as_proof_it_is_gone(self):
+        thread = _thread()
+        thread.fetch_message.side_effect = _http_error(500)
+        self.assertFalse(await journal_is_missing(thread, 99))
+
+    async def test_finds_only_the_missing_ones_and_skips_recipes_whose_post_is_gone(self):
+        ok, deleted = _thread(1), _thread(2)
+        deleted.fetch_message.side_effect = discord.NotFound(MagicMock(status=404), "gone")
+        rows = [
+            {"discord_thread_id": 1, "title": "Ok", "journal_message_id": 10},
+            {"discord_thread_id": 2, "title": "Deleted", "journal_message_id": 20},
+            {"discord_thread_id": 3, "title": "Post gone", "journal_message_id": 30},
+        ]
+        with patch.object(recipe_sync_commands, "get_journaled_recipes", return_value=rows):
+            missing = await find_missing_journals({1: ok, 2: deleted})
+        self.assertEqual([r["title"] for r in missing], ["Deleted"])
+
+
+class RestoreJournalTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reposts_through_the_same_function_a_review_uses(self):
+        thread = _thread()
+        with patch.object(recipe_sync_commands, "sync_journal_message", AsyncMock()) as sync:
+            line = await restore_journal(thread, "Teriyaki Chicken")
+        sync.assert_awaited_once_with(thread)
+        thread.edit.assert_not_awaited()
+        self.assertIn("restored", line)
+
+    async def test_an_archived_post_is_reopened_and_put_back_even_on_failure(self):
+        thread = _thread(archived=True)
+        with patch.object(recipe_sync_commands, "sync_journal_message", AsyncMock(side_effect=RuntimeError("boom"))):
+            line = await restore_journal(thread, "Teriyaki Chicken")
+        self.assertEqual([c.kwargs for c in thread.edit.await_args_list], [{"archived": False}, {"archived": True}])
+        self.assertIn("couldn't rebuild", line)
+
+    async def test_the_button_rebuilds_each_and_cannot_be_double_clicked(self):
+        rows = [{"discord_thread_id": 7, "title": "Teriyaki Chicken", "journal_message_id": None}]
+        button = RebuildJournalsButton(rows)
+        button._view = ReimportView([], [], rows)
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.response.send_message = AsyncMock()
+        interaction.edit_original_response = AsyncMock()
+        interaction.client.get_channel.return_value = _thread(7)
+        with patch.object(recipe_sync_commands, "sync_journal_message", AsyncMock()) as sync:
+            await button.callback(interaction)
+            await button.callback(interaction)
+        sync.assert_awaited_once()
+        self.assertIn("restored", interaction.edit_original_response.await_args.kwargs["content"])
 
 
 if __name__ == "__main__":

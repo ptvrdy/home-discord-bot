@@ -359,6 +359,25 @@ def get_cooking_log_entries(
         return [dict(row) for row in rows]
 
 
+def get_journaled_recipes(database_path: Path = DATABASE_PATH) -> list[dict]:
+    """Recipes that have at least one journal entry (a review), with the ID of
+    the Discord message that shows them (None if one was never posted) - what
+    /check_recipes uses to find journal messages that were deleted."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT discord_thread_id, title, journal_message_id
+            FROM recipes
+            WHERE discord_thread_id IS NOT NULL
+              AND EXISTS (SELECT 1 FROM cooking_log WHERE cooking_log.recipe_id = recipes.id)
+            ORDER BY title
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
 def get_journal_message_id(
     discord_thread_id: int,
     database_path: Path = DATABASE_PATH,

@@ -20,12 +20,14 @@ from services.backup import backup_database
 from services.database import (
     delete_recipe_by_thread,
     get_all_recipes,
+    get_journaled_recipes,
     get_recipe_by_thread,
     get_recipe_sources,
     get_recipe_tags,
     save_recipe,
     update_recipe_source,
 )
+from commands.recipe_commands import sync_journal_message
 from services.embed import create_recipe_embed
 from services.forum import HUMAN_TAGS, forum_tag_label
 from services.pantry_embed import chunk_lines
@@ -218,14 +220,104 @@ class ForgetButton(discord.ui.Button):
             await interaction.followup.send(chunk, ephemeral=True)
 
 
+REBUILD_JOURNALS_BATCH = 25
+
+
+async def journal_is_missing(thread: discord.Thread, journal_message_id: int | None) -> bool:
+    """True when a recipe has reviews but its journal message isn't in the post:
+    never posted, or deleted. A failed lookup (anything but "not found") is not
+    proof, so it counts as present."""
+    if not journal_message_id:
+        return True
+    try:
+        await thread.fetch_message(journal_message_id)
+    except discord.NotFound:
+        return True
+    except discord.HTTPException:
+        return False
+    return False
+
+
+async def find_missing_journals(threads: dict[int, discord.Thread]) -> list[dict]:
+    """Journaled recipes (see get_journaled_recipes) whose journal message is
+    missing from their post. A recipe whose post is gone is skipped - that's
+    reported separately."""
+    rows = [row for row in get_journaled_recipes() if row["discord_thread_id"] in threads]
+    limit = asyncio.Semaphore(5)
+
+    async def check(row):
+        async with limit:
+            return await journal_is_missing(threads[row["discord_thread_id"]], row["journal_message_id"])
+
+    results = await asyncio.gather(*(check(row) for row in rows))
+    return [row for row, missing in zip(rows, results) if missing]
+
+
+async def restore_journal(thread: discord.Thread, title: str) -> str:
+    """Re-post one recipe's journal. An archived post is reopened first and put
+    back after, even on failure. Returns a line for the report."""
+    reopened = thread.archived
+    try:
+        if reopened:
+            await thread.edit(archived=False)
+        try:
+            await sync_journal_message(thread)
+        finally:
+            if reopened:
+                await thread.edit(archived=True)
+    except Exception as error:
+        logger.exception("Couldn't rebuild the journal for %r", title)
+        return f"• <#{thread.id}> — ❌ couldn't rebuild ({error})"
+    return f"• <#{thread.id}> — ✅ journal restored"
+
+
+class RebuildJournalsButton(discord.ui.Button):
+    def __init__(self, rows: list[dict]):
+        count = min(len(rows), REBUILD_JOURNALS_BATCH)
+        super().__init__(label=f"📓 Rebuild {count} journal{'s' if count != 1 else ''}", style=discord.ButtonStyle.primary)
+        self.rows = rows
+
+    async def callback(self, interaction: discord.Interaction):
+        if getattr(self.view, "rebuild_claimed", False):
+            await interaction.response.send_message("⏳ Already on it.", ephemeral=True)
+            return
+        self.view.rebuild_claimed = True
+        await interaction.response.defer()
+
+        lines = ["📓 Journals rebuilt from the saved reviews:"]
+        for row in self.rows[:REBUILD_JOURNALS_BATCH]:
+            thread = interaction.client.get_channel(row["discord_thread_id"])
+            if thread is None:
+                try:
+                    thread = await interaction.client.fetch_channel(row["discord_thread_id"])
+                except discord.HTTPException:
+                    lines.append(f"• {row['title']} — ❌ the post can't be found anymore")
+                    continue
+            lines.append(await restore_journal(thread, row["title"]))
+        remaining = len(self.rows) - REBUILD_JOURNALS_BATCH
+        if remaining > 0:
+            lines.append(f"_{remaining} more — run /check_recipes again for the rest._")
+        chunks = chunk_lines(lines)
+        await interaction.edit_original_response(content=chunks[0], view=None)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(chunk, ephemeral=True)
+
+
 class ReimportView(discord.ui.View):
     """The /check_recipes buttons: re-import posts the database is missing,
-    and/or forget recipes whose post is gone."""
+    restore deleted review journals, and/or forget recipes whose post is gone."""
 
-    def __init__(self, thread_ids: list[int], forgettable: list[dict] | None = None):
+    def __init__(
+        self,
+        thread_ids: list[int],
+        forgettable: list[dict] | None = None,
+        missing_journals: list[dict] | None = None,
+    ):
         super().__init__(timeout=900)
         if thread_ids:
             self.add_item(ReimportButton(thread_ids))
+        if missing_journals:
+            self.add_item(RebuildJournalsButton(missing_journals))
         if forgettable:
             self.add_item(ForgetButton(forgettable))
 
@@ -251,7 +343,9 @@ class RecipeSync(commands.Cog):
         rows = get_all_recipes()
         missing_in_db, missing_in_forum = find_mismatches({thread_id: thread.name for thread_id, thread in threads.items()}, rows)
 
-        if not missing_in_db and not missing_in_forum:
+        missing_journals = await find_missing_journals(threads)
+
+        if not missing_in_db and not missing_in_forum and not missing_journals:
             await interaction.followup.send(
                 f"✅ All {len(threads)} recipe posts match the database.", ephemeral=True
             )
@@ -268,8 +362,15 @@ class RecipeSync(commands.Cog):
             )
             lines += [f"• {row['title']}" for row in missing_in_forum]
 
+        if missing_journals:
+            lines.append(
+                f"\n**Review journals missing from their post ({len(missing_journals)})** — "
+                "deleted by accident? The reviews are still saved; the button reposts them:"
+            )
+            lines += [f"• <#{row['discord_thread_id']}>" for row in missing_journals]
+
         chunks = chunk_lines(lines)
-        view = ReimportView([thread_id for thread_id, _ in missing_in_db], missing_in_forum)
+        view = ReimportView([thread_id for thread_id, _ in missing_in_db], missing_in_forum, missing_journals)
         for index, chunk in enumerate(chunks):
             if view and index == len(chunks) - 1:
                 await interaction.followup.send(chunk, view=view, ephemeral=True)

@@ -127,6 +127,26 @@ def build_combined_recipe_title(recipes: list[dict], limit: int = 100) -> str:
     return title
 
 
+async def sync_journal_message(thread: discord.Thread) -> None:
+    """Rebuild the recipe's single journal message from its full cooking-log
+    history: edit it in place, or - if it was never posted or has been deleted -
+    post a fresh one."""
+    entries = get_cooking_log_entries(thread.id)
+    embed = build_journal_embed(entries)
+
+    journal_message_id = get_journal_message_id(thread.id)
+    if journal_message_id:
+        try:
+            message = await thread.fetch_message(journal_message_id)
+            await message.edit(embed=embed)
+            return
+        except discord.NotFound:
+            pass  # the message was deleted; fall through and repost it
+
+    message = await thread.send(embed=embed)
+    set_journal_message_id(thread.id, message.id)
+
+
 class RecipeReviewModal(discord.ui.Modal):
     def __init__(
         self,
@@ -234,21 +254,7 @@ class RecipeReviewModal(discord.ui.Modal):
             )
 
     async def _sync_journal_message(self):
-        """Rebuild the recipe's single journal message from its full cooking-log history."""
-        entries = get_cooking_log_entries(self.thread.id)
-        embed = build_journal_embed(entries)
-
-        journal_message_id = get_journal_message_id(self.thread.id)
-        if journal_message_id:
-            try:
-                message = await self.thread.fetch_message(journal_message_id)
-                await message.edit(embed=embed)
-                return
-            except discord.NotFound:
-                pass  # the message was deleted; fall through and repost it
-
-        message = await self.thread.send(embed=embed)
-        set_journal_message_id(self.thread.id, message.id)
+        await sync_journal_message(self.thread)
 
 
 class ManualRecipeTimingModal(discord.ui.Modal, title="Add a Recipe · Timing & Servings"):
