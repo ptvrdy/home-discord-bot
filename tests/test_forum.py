@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from config.discord_tags import DISCORD_TAGS
 from services.forum import (
     diagnose_tags,
+    forum_tag_label,
     get_matching_tags,
     keep_single_human_tag,
     tags_with_human_status,
@@ -118,6 +119,50 @@ class ForumTagTests(unittest.TestCase):
             ],
         )
 
+    def test_matches_a_tag_made_with_discords_emoji_picker(self):
+        # Discord stores a picker-made tag as name "Thanksgiving" + a separate
+        # emoji field, not "🦃 Thanksgiving" like the tags typed with the emoji in
+        # the name. Matching on `.name` alone silently never applied it.
+        channel = SimpleNamespace(
+            available_tags=[
+                SimpleNamespace(name="Thanksgiving", emoji=SimpleNamespace(name="🦃", id=None)),
+                SimpleNamespace(name=DISCORD_TAGS["needs_review"]["discord_name"]),
+            ]
+        )
+
+        tags = get_matching_tags(channel, ["needs_review", "thanksgiving"])
+
+        self.assertEqual([tag.name for tag in tags], [DISCORD_TAGS["needs_review"]["discord_name"], "Thanksgiving"])
+
+    def test_thanksgiving_outranks_the_proteins_under_the_five_tag_cap(self):
+        keys = ["needs_review", "beef", "pasta", "one_pot", "quick", "dinner", "thanksgiving"]
+        channel = SimpleNamespace(
+            available_tags=[SimpleNamespace(name=DISCORD_TAGS[key]["discord_name"]) for key in keys]
+        )
+
+        tags = get_matching_tags(channel, keys)
+
+        self.assertEqual(len(tags), 5)
+        self.assertIn(DISCORD_TAGS["thanksgiving"]["discord_name"], [tag.name for tag in tags])
+
+    def test_a_retired_tag_still_in_the_database_is_skipped_not_fatal(self):
+        # "vegetarian" was dropped from the config but old recipes still carry it.
+        channel = SimpleNamespace(
+            available_tags=[SimpleNamespace(name=DISCORD_TAGS["needs_review"]["discord_name"])]
+        )
+
+        tags = get_matching_tags(channel, ["needs_review", "vegetarian"])
+
+        self.assertEqual([tag.name for tag in tags], [DISCORD_TAGS["needs_review"]["discord_name"]])
+
+    def test_diagnose_reports_a_picker_made_tag_as_matching_not_missing(self):
+        tag = SimpleNamespace(name="Thanksgiving", emoji=SimpleNamespace(name="🦃", id=None))
+        names = [DISCORD_TAGS[key]["discord_name"] for key in DISCORD_TAGS if key != "thanksgiving"]
+
+        result = diagnose_tags(names + [forum_tag_label(tag)])
+
+        self.assertNotIn(DISCORD_TAGS["thanksgiving"]["discord_name"], result["missing"])
+
     def test_diagnose_tags_reports_ok_mismatched_and_missing(self):
         base_name = DISCORD_TAGS["quick"]["discord_name"]
         decorated_quick = base_name[0] + chr(0xFE0F) + base_name[1:]
@@ -148,3 +193,24 @@ class ForumTagTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ForumTagLabelTests(unittest.TestCase):
+    def test_plain_name_is_unchanged(self):
+        self.assertEqual(forum_tag_label(SimpleNamespace(name="🥩 Beef")), "🥩 Beef")
+
+    def test_picker_emoji_is_put_in_front_of_the_name(self):
+        tag = SimpleNamespace(name="Thanksgiving", emoji=SimpleNamespace(name="🦃", id=None))
+        self.assertEqual(forum_tag_label(tag), "🦃 Thanksgiving")
+
+    def test_emoji_already_in_the_name_is_not_doubled(self):
+        tag = SimpleNamespace(name="🦃 Thanksgiving", emoji=SimpleNamespace(name="🦃", id=None))
+        self.assertEqual(forum_tag_label(tag), "🦃 Thanksgiving")
+
+    def test_no_emoji_field(self):
+        self.assertEqual(forum_tag_label(SimpleNamespace(name="Soup", emoji=None)), "Soup")
+
+    def test_custom_server_emoji_is_not_prefixed(self):
+        # A custom emoji can't be written into the config, so there's nothing to match on.
+        tag = SimpleNamespace(name="Soup", emoji=SimpleNamespace(name="soupy", id=123))
+        self.assertEqual(forum_tag_label(tag), "Soup")

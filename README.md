@@ -476,7 +476,11 @@ tests/                       Unit tests (unittest) for the services above
    (`beef`, `chicken`, `dessert`, `needs_review`, `favorite`, etc. — see
    [`config/discord_tags.py`](config/discord_tags.py) for the full list) already
    created on that forum. Run `/check_setup` after creating them to confirm
-   they're recognized correctly.
+   they're recognized correctly. Either way of making a tag works: typing the
+   emoji into the name (`🥩 Beef`) or picking it with Discord's emoji picker
+   (stored as the name `Beef` plus a separate emoji) — Rosie matches on the
+   emoji-then-name label either way. Discord caps a forum at 20 tags, so adding
+   one means retiring another (`vegetarian` made room for `thanksgiving`).
 
    `NUDGES_CHANNEL_ID` is the channel ID of a plain text channel (e.g. `#nudges`)
    where overdue-chore reminders get posted. Without it, `/done` still works —

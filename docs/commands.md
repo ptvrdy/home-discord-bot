@@ -32,7 +32,7 @@ from `#general` or anywhere else.
 
 | Command | What it does |
 |---|---|
-| `/review` **(run in its thread)** | Log that you made or reviewed a recipe: pick a status, rate it 1–5 stars, leave notes. Appends to that recipe's single growing journal message. |
+| `/review` **(run in its thread)** | Log that you made or reviewed a recipe: pick a status, rate it 1–5 stars, leave notes. Appends to that recipe's single growing journal message. If the recipe isn't in the database (a post `/check_recipes` would list as missing), it says so up front instead of losing the review — run `/check_recipes` to add it, then try again. |
 | `/cooking_stats` | Box size, review backlog, top-rated recipes, most-cooked recipes, and per-person activity. |
 
 ## 🛒 Grocery Shopping

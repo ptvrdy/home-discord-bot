@@ -36,6 +36,7 @@ from services.forum import (
     HUMAN_TAGS,
     create_recipe_post,
     diagnose_tags,
+    forum_tag_label,
     get_matching_tags,
     keep_single_human_tag,
     normalize_tag_name,
@@ -71,6 +72,11 @@ RECIPE_TAG_CHOICES = [
     for tag_key, tag_info in DISCORD_TAGS.items()
     if tag_key not in HUMAN_TAGS
 ]
+
+RECIPE_NOT_IN_BOX_MESSAGE = (
+    "❌ This recipe isn't in the recipe box database, so there's nowhere to save a review "
+    "- nothing was saved. Run `/check_recipes` to add it, then try again."
+)
 
 SEARCH_RESULT_LIMIT = 10
 NEEDS_REVIEW_LIMIT = 25
@@ -166,6 +172,14 @@ class RecipeReviewModal(discord.ui.Modal):
         # the journal message itself is posted/edited directly via self.thread below.
         await interaction.response.defer(ephemeral=True, thinking=True)
 
+        # add_cooking_log() quietly saves nothing for a post that has no database
+        # row, and this used to reply "Review saved!" anyway (then post an empty
+        # journal), throwing the typed review away. Check first, before the forum
+        # tag below gets changed too.
+        if get_recipe_by_thread(self.thread.id) is None:
+            await interaction.followup.send(RECIPE_NOT_IN_BOX_MESSAGE, ephemeral=True)
+            return
+
         try:
             parent = self.thread.parent
             if not isinstance(parent, discord.ForumChannel):
@@ -184,7 +198,7 @@ class RecipeReviewModal(discord.ui.Modal):
             activity = "Made" if self.status_key != "needs_review" else "Reviewed"
 
             try:
-                add_cooking_log(
+                saved = add_cooking_log(
                     self.thread.id,
                     made_at,
                     activity,
@@ -199,6 +213,10 @@ class RecipeReviewModal(discord.ui.Modal):
                     f"⚠️ Recipe status was updated, but I couldn't save the journal entry: {error}",
                     ephemeral=True,
                 )
+                return
+
+            if not saved:
+                await interaction.followup.send(RECIPE_NOT_IN_BOX_MESSAGE, ephemeral=True)
                 return
 
             await self._sync_journal_message()
@@ -1003,9 +1021,9 @@ class Recipe(commands.Cog):
         }
         status = next(
             (
-                status_names[normalize_tag_name(tag.name)]
+                status_names[normalize_tag_name(forum_tag_label(tag))]
                 for tag in filtered_tags
-                if normalize_tag_name(tag.name) in status_names
+                if normalize_tag_name(forum_tag_label(tag)) in status_names
             ),
             None,
         )
@@ -1033,6 +1051,10 @@ class Recipe(commands.Cog):
                 "❌ Use this command inside a recipe thread.",
                 ephemeral=True,
             )
+            return
+
+        if get_recipe_by_thread(channel.id) is None:
+            await interaction.response.send_message(RECIPE_NOT_IN_BOX_MESSAGE, ephemeral=True)
             return
 
         await interaction.response.send_modal(
@@ -1494,7 +1516,7 @@ class Recipe(commands.Cog):
             )
             return
 
-        result = diagnose_tags([tag.name for tag in channel.available_tags])
+        result = diagnose_tags([forum_tag_label(tag) for tag in channel.available_tags])
 
         lines = [f"✅ {len(result['ok'])} tag(s) match exactly."]
 

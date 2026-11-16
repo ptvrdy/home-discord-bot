@@ -142,6 +142,24 @@ RECIPE_KEYWORDS = {
         "exclude": [],
     },
 
+    # An occasion tag is mostly one you add on purpose (it's in the /tags menu),
+    # so auto-tagging is deliberately conservative: only unmistakable phrases,
+    # not "turkey" or "stuffing" alone (ground turkey tacos, stuffed peppers).
+    "thanksgiving": {
+        "category": "occasion",
+        "include": [
+            "thanksgiving",
+            "roast turkey", "whole turkey", "turkey gravy",
+            "cranberry sauce",
+            "green bean casserole", "sweet potato casserole",
+            "pumpkin pie",
+            "turkey stuffing", "bread stuffing", "cornbread stuffing",
+        ],
+        "exclude": [
+            "pumpkin pie spice",
+        ],
+    },
+
     "dessert": {
         "category": "type",
         "include": [

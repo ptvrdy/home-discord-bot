@@ -23,6 +23,24 @@ def normalize_tag_name(name: str) -> str:
     return "".join(character for character in name if character not in _VARIATION_SELECTORS)
 
 
+def forum_tag_label(tag) -> str:
+    """A forum tag's name as Discord's UI shows it - emoji first ("🦃 Thanksgiving").
+
+    Discord stores a tag's emoji one of two ways: typed into the name text
+    ("🥩 Beef", `.name` carries the emoji) or chosen with the emoji picker
+    (`.name` is just "Thanksgiving" and the emoji sits in a separate field).
+    Rosie's config always uses the combined form, so matching on `.name` alone
+    silently never matched a picker-made tag and it was never applied. A custom
+    server emoji can't be written into the config, so it isn't prefixed."""
+    emoji = getattr(tag, "emoji", None)
+    if emoji is None or getattr(emoji, "id", None) is not None:
+        return tag.name
+    symbol = emoji.name
+    if not symbol or tag.name.startswith(symbol):
+        return tag.name
+    return f"{symbol} {tag.name}"
+
+
 HUMAN_TAG_PRIORITY = {
     "favorite": 0,
     "make_again": 1,
@@ -34,12 +52,12 @@ TAG_PRIORITY = {
     "favorite": 1,
     "made_before": 1,
     "make_again": 1,
+    "thanksgiving": 5,
     "beef": 10,
     "chicken": 10,
     "pork": 10,
     "seafood": 10,
     "tofu": 10,
-    "vegetarian": 10,
     "pasta": 20,
     "soup": 20,
     "dessert": 20,
@@ -61,14 +79,14 @@ def keep_single_human_tag(tags: list[discord.ForumTag]) -> list[discord.ForumTag
     }
     human_tags = [
         tag for tag in tags
-        if tag_keys_by_name.get(normalize_tag_name(tag.name)) in HUMAN_TAGS
+        if tag_keys_by_name.get(normalize_tag_name(forum_tag_label(tag))) in HUMAN_TAGS
     ]
     if len(human_tags) <= 1:
         return tags
 
     kept_human_tag = min(
         human_tags,
-        key=lambda tag: HUMAN_TAG_PRIORITY[tag_keys_by_name[normalize_tag_name(tag.name)]],
+        key=lambda tag: HUMAN_TAG_PRIORITY[tag_keys_by_name[normalize_tag_name(forum_tag_label(tag))]],
     )
     return [
         tag for tag in tags
@@ -91,15 +109,15 @@ def tags_with_human_status(
     }
     non_human_tags = [
         tag for tag in current_tags
-        if tag_keys_by_name.get(normalize_tag_name(tag.name)) not in HUMAN_TAGS
+        if tag_keys_by_name.get(normalize_tag_name(forum_tag_label(tag))) not in HUMAN_TAGS
     ]
-    available_tags = {normalize_tag_name(tag.name): tag for tag in channel.available_tags}
+    available_tags = {normalize_tag_name(forum_tag_label(tag)): tag for tag in channel.available_tags}
     status_tag = available_tags.get(normalize_tag_name(DISCORD_TAGS[status_key]["discord_name"]))
     if status_tag is None:
         raise ValueError(f"The forum is missing the {status_key} tag")
 
     non_human_tags.sort(
-        key=lambda tag: TAG_PRIORITY.get(tag_keys_by_name.get(normalize_tag_name(tag.name), ""), 100),
+        key=lambda tag: TAG_PRIORITY.get(tag_keys_by_name.get(normalize_tag_name(forum_tag_label(tag)), ""), 100),
     )
     return [status_tag, *non_human_tags][:MAX_APPLIED_FORUM_TAGS]
 
@@ -140,7 +158,7 @@ def get_matching_tags(
         key=lambda tag_key: TAG_PRIORITY.get(tag_key, 100),
     )
 
-    available_tags = {normalize_tag_name(tag.name): tag for tag in channel.available_tags}
+    available_tags = {normalize_tag_name(forum_tag_label(tag)): tag for tag in channel.available_tags}
     return [
         available_tags[normalize_tag_name(DISCORD_TAGS[tag_key]["discord_name"])]
         for tag_key in prioritized_tag_keys

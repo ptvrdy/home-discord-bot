@@ -25,11 +25,6 @@ DISCORD_TAGS = {
         "discord_name": "🧈 Tofu",
         "description": "Contains tofu",
     },
-    "vegetarian": {
-        "category": "dietary",
-        "discord_name": "🥬 Vegetarian",
-        "description": "Contains no detected meat or seafood",
-    },
 
     # Recipe type tags
     "dessert": {
@@ -46,6 +41,13 @@ DISCORD_TAGS = {
         "category": "type",
         "discord_name": "🥣 Soup",
         "description": "A soup recipe",
+    },
+
+    # Occasion tags
+    "thanksgiving": {
+        "category": "occasion",
+        "discord_name": "🦃 Thanksgiving",
+        "description": "A Thanksgiving dish",
     },
 
     # Method and time tags

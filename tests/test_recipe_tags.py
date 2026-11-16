@@ -39,14 +39,33 @@ class RecipeTagTests(unittest.TestCase):
             {
                 "breakfast",
                 "one_pot",
-                "vegetarian",
             }.issubset(tags)
         )
 
-    def test_vegetarian_tag_is_omitted_for_meat_and_seafood(self):
-        recipe = Recipe(title="Chicken and Shrimp Pasta", ingredients=[])
+    def test_vegetarian_is_retired_and_never_generated(self):
+        # It was removed from the forum (Discord's 20-tag cap), so a stored tag
+        # nobody can see or filter by would only be dead data.
+        recipe = Recipe(title="Garden Salad", ingredients=["lettuce", "tomato"])
 
         self.assertNotIn("vegetarian", generate_recipe_tags(recipe))
+
+    def test_thanksgiving_is_tagged_for_unmistakable_dishes(self):
+        for title in ["Thanksgiving Stuffing", "Classic Roast Turkey", "Homemade Cranberry Sauce",
+                      "Green Bean Casserole", "Grandma's Pumpkin Pie"]:
+            with self.subTest(title=title):
+                recipe = Recipe(title=title, ingredients=[])
+                self.assertIn("thanksgiving", generate_recipe_tags(recipe))
+
+    def test_thanksgiving_is_not_tagged_for_everyday_turkey_or_pumpkin_dishes(self):
+        for title, ingredients in [
+            ("Ground Turkey Tacos", ["ground turkey"]),
+            ("Turkey Burgers", ["turkey"]),
+            ("Pumpkin Muffins", ["pumpkin pie spice", "flour"]),
+            ("Stuffed Peppers", ["peppers", "rice"]),
+        ]:
+            with self.subTest(title=title):
+                recipe = Recipe(title=title, ingredients=ingredients)
+                self.assertNotIn("thanksgiving", generate_recipe_tags(recipe))
 
     def test_desserts_are_tagged(self):
         for title in ["Chocolate Cake", "Apple Pie", "Sourdough Starter"]:

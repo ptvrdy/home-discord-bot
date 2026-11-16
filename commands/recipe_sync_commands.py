@@ -17,7 +17,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from services.database import get_all_recipes, save_recipe
-from services.forum import HUMAN_TAGS
+from services.forum import HUMAN_TAGS, forum_tag_label
 from services.pantry_embed import chunk_lines
 from services.recipe_sync import find_mismatches, recipe_from_post
 from services.recipe_tags import generate_recipe_tags
@@ -55,7 +55,7 @@ async def reimport_thread(thread: discord.Thread) -> str:
             break
 
     recipe, complete = recipe_from_post(
-        starter.embeds[0].to_dict(), instructions_text, [tag.name for tag in thread.applied_tags]
+        starter.embeds[0].to_dict(), instructions_text, [forum_tag_label(tag) for tag in thread.applied_tags]
     )
     how = "rebuilt from the post"
     if recipe.source_url:
