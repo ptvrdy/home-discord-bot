@@ -11,6 +11,7 @@ from commands.chore_commands import chore_name_autocomplete
 from services.chores import fairness_callout, mention_for_person
 from services.database import (
     delete_booked_task,
+    delete_open_booked_task,
     get_all_chores,
     get_booked_task,
     get_chore_log_entries,
@@ -49,6 +50,13 @@ from services.schedule import (
 )
 from services.grocy import Grocy, GrocyError, grocy_configured
 from services.pantry import THIS_WEEK_PANTRY_STATE_KEY, ThisWeekPantry, this_week_pantry
+from services.open_tasks import (
+    build_open_task_embeds,
+    format_open_tasks,
+    look_up_events,
+    removed_note,
+    summarize,
+)
 from services.task_sweep import recent_open_tasks
 from services.this_week_embed import build_this_week_embed
 
@@ -605,6 +613,43 @@ async def catch_up_task(bot, task: dict) -> bool:
     return False
 
 
+# Discord's "Unknown Channel" / "Unknown Message" error codes - the only 404s
+# that mean a message is really gone.
+_GONE_ERROR_CODES = {10003, 10008}
+
+
+async def _message_is_deleted(bot, task: dict) -> bool:
+    """Whether a task's confirmation message definitely no longer exists. The
+    answer gets acted on (the task is deleted), so anything short of Discord
+    saying so outright - channel not cached, no access, a hiccup, some other
+    404 - counts as "can't tell" and the task is left alone."""
+    channel = bot.get_channel(task["channel_id"])
+    if not isinstance(channel, discord.abc.Messageable):
+        return False
+    try:
+        await channel.fetch_message(task["message_id"])
+    except discord.NotFound as error:
+        return error.code in _GONE_ERROR_CODES
+    except discord.HTTPException:
+        return False
+    return False
+
+
+async def collect_open_tasks(bot, rows: list[dict]) -> list[dict]:
+    """The open-task rows with their calendar state and whether each message
+    still exists. A calendar outage degrades to "due time unknown" instead of
+    failing - the list is still worth having."""
+    try:
+        tasks = await asyncio.to_thread(look_up_events, rows)
+    except Exception:
+        logger.exception("Couldn't check the calendar for the open-task list")
+        tasks = [dict(row, due=None, event_deleted=False) for row in rows]
+
+    for task in tasks:
+        task["message_deleted"] = await _message_is_deleted(bot, task)
+    return tasks
+
+
 class Schedule(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -670,6 +715,59 @@ class Schedule(commands.Cog):
         completed_by = payload.member.display_name if payload.member else "someone"
 
         await complete_booked_task(self.bot, channel, task, completed_by)
+
+    @commands.Cog.listener()
+    async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent):
+        """If an unfinished task's confirmation message is deleted, nothing can
+        ever ✅ it, so forget the task instead of leaving it open forever. A
+        completed task is kept (see delete_open_booked_task)."""
+        if delete_open_booked_task(payload.message_id):
+            logger.info("Dropped the open task for deleted message %s", payload.message_id)
+
+    @commands.Cog.listener()
+    async def on_raw_bulk_message_delete(self, payload: discord.RawBulkMessageDeleteEvent):
+        for message_id in payload.message_ids:
+            if delete_open_booked_task(message_id):
+                logger.info("Dropped the open task for deleted message %s", message_id)
+
+    @app_commands.command(
+        name="open_tasks",
+        description="List every task that was never marked done, with a link to its message",
+    )
+    async def open_tasks(self, interaction: discord.Interaction):
+        if interaction.guild_id is None:
+            await interaction.response.send_message("❌ Use this command in the server.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        rows = get_open_booked_tasks()
+        if not rows:
+            await interaction.followup.send("🎉 Every task Rosie booked has been completed.", ephemeral=True)
+            return
+
+        tasks = await collect_open_tasks(self.bot, rows)
+
+        # With the message gone there's nothing left to react on, so the task
+        # could never be completed: drop it (and say so) rather than list a dead
+        # link. This also catches any the live listener missed while Rosie was down.
+        gone = [task for task in tasks if task["message_deleted"]]
+        for task in gone:
+            delete_open_booked_task(task["message_id"])
+        kept = [task for task in tasks if not task["message_deleted"]]
+        removed = [task["task_name"] for task in gone]
+
+        if not kept:
+            note = "\n" + removed_note(removed) if removed else ""
+            await interaction.followup.send(f"No unfinished tasks left.{note}", ephemeral=True)
+            return
+
+        now = datetime.now(HOUSEHOLD_TZ)
+        embeds = build_open_task_embeds(
+            format_open_tasks(kept, now, interaction.guild_id), summarize(kept, now), removed
+        )
+        for embed in embeds:
+            await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(
         name="refresh_this_week",

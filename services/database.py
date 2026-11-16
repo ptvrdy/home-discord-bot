@@ -1005,6 +1005,20 @@ def delete_booked_task(message_id: int, database_path: Path = DATABASE_PATH) -> 
         connection.execute("DELETE FROM booked_tasks WHERE message_id = ?", (message_id,))
 
 
+def delete_open_booked_task(message_id: int, database_path: Path = DATABASE_PATH) -> bool:
+    """Forget an UNFINISHED booked task whose Discord message was deleted -
+    with the message gone there's nothing left to ✅, so it would sit open
+    forever. A completed task is deliberately kept: the weekly digest counts
+    it, and tidying up chat shouldn't silently erase a week's completions.
+    Returns whether a row was deleted."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        cursor = connection.execute(
+            "DELETE FROM booked_tasks WHERE message_id = ? AND completed_at IS NULL", (message_id,)
+        )
+        return cursor.rowcount > 0
+
+
 def record_wishlist_item(
     message_id: int,
     channel_id: int,

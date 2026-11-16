@@ -267,6 +267,25 @@ commands are confined to that channel; otherwise they work anywhere.
   Calendar since it was booked (found by its event ID, which a reschedule
   doesn't change), completing it still shows accurate, current information
   instead of stale text from whenever it was first proposed.
+- **`/open_tasks`** — lists every task that was never marked done (shown only to
+  you), most overdue first. Each task name links straight to its original
+  confirmation message, so you can jump there and ✅ it. Each line shows when it
+  was due (read live from Google Calendar, so a manual reschedule is reflected)
+  and who booked it, and flags a **deleted calendar event**. Unlike the journal
+  dashboard widget, which hides those, this list keeps them, since they're the
+  ones that need a look. A Google Calendar outage only turns the due times into
+  "unknown"; the list still shows. A task whose **Discord message was deleted**
+  is never listed: with nothing left to react on it could never be completed, so
+  the command drops it from the database and tells you which it removed.
+- **Deleting a task's message forgets the task.** If you delete an unfinished
+  task's confirmation message, Rosie drops the task from the database right away
+  (also for a bulk delete), instead of leaving it open forever. A **completed**
+  task is kept even if its message is deleted, because the weekly digest counts
+  it — clearing out chat shouldn't silently change last week's recap. Only
+  Discord's explicit "unknown message/channel" answer counts as deleted; a
+  hiccup, missing access, or an uncached channel never removes anything. The
+  calendar event itself is never touched. (The listener only sees deletions that
+  happen while Rosie is running; `/open_tasks` catches the rest.)
 - **Missed ✅ catch-up.** Discord reports a reaction to Rosie exactly once, at the
   instant it's added, so a ✅ that lands while she's restarting, reconnecting or
   busy would otherwise be lost for good — the task would sit open even though

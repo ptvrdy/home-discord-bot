@@ -8,6 +8,7 @@ from models.recipe_card import Recipe
 from services.database import (
     add_cooking_log,
     delete_booked_task,
+    delete_open_booked_task,
     get_all_chores,
     get_booked_task,
     get_chore_completions_between,
@@ -937,6 +938,40 @@ class BookedTaskTests(unittest.TestCase):
             self.assertIsNone(second)
             task = get_booked_task(111, database_path)
             self.assertEqual(task["completed_by"], "Joe")
+
+    def test_delete_open_booked_task_removes_an_unfinished_task(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            record_booked_task(
+                111, 222, "call vet", "event-1", "fam@example.com",
+                datetime(2026, 8, 10, tzinfo=timezone.utc), "Peyton", database_path,
+            )
+
+            self.assertTrue(delete_open_booked_task(111, database_path))
+            self.assertIsNone(get_booked_task(111, database_path))
+
+    def test_delete_open_booked_task_keeps_a_completed_task(self):
+        # The weekly digest counts completed tasks, so tidying up chat (deleting
+        # the message) must not silently erase them.
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+            record_booked_task(
+                111, 222, "call vet", "event-1", "fam@example.com",
+                datetime(2026, 8, 10, tzinfo=timezone.utc), "Peyton", database_path,
+            )
+            mark_task_completed(111, datetime(2026, 8, 11, tzinfo=timezone.utc), "Joe", database_path)
+
+            self.assertFalse(delete_open_booked_task(111, database_path))
+            self.assertIsNotNone(get_booked_task(111, database_path))
+
+    def test_delete_open_booked_task_is_false_for_an_unknown_message(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database_path = Path(temporary_directory) / "recipes.db"
+            initialize_database(database_path)
+
+            self.assertFalse(delete_open_booked_task(999, database_path))
 
     def test_open_booked_tasks_lists_only_unfinished_ones_with_their_message_ids(self):
         # The catch-up sweep needs message_id/channel_id to find each task's
