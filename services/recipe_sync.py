@@ -49,6 +49,25 @@ def tag_keys_from_forum_tags(tag_names: list[str]) -> list[str]:
     return [by_name[normalize_tag_name(name)] for name in tag_names if normalize_tag_name(name) in by_name]
 
 
+def recipe_from_row(row: dict, tags: list[str]) -> Recipe:
+    """A Recipe built from a database row (get_recipe_by_thread) and its stored
+    tags - what's needed to re-render a recipe's card from the database."""
+    return Recipe(
+        title=row["title"],
+        ingredients=row["ingredients"],
+        instructions=row["instructions"],
+        prep_time=row.get("prep_time"),
+        cook_time=row.get("cook_time"),
+        total_time=row.get("total_time"),
+        total_minutes=row.get("total_minutes"),
+        yields=row.get("yields"),
+        image_url=row.get("image_url"),
+        source_url=row["source_url"],
+        source_name=row["source_name"],
+        tags=tags,
+    )
+
+
 def _plain(text: str) -> str:
     return text.replace("\xa0", " ").strip()
 

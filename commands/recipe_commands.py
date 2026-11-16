@@ -53,7 +53,8 @@ from services.grocery_list import (
 from services.image_check import ImageFetchError, prepare_recipe_image
 from services.journal import build_journal_embed
 from services.recipe_tags import generate_recipe_tags
-from services.scraper import scrape_recipe
+from services.recipe_sources import looks_like_url
+from services.scraper import get_source_name, scrape_recipe
 from services.time_parser import parse_minutes
 from services.timezone import household_timezone
 
@@ -354,7 +355,7 @@ class ManualRecipeModal(discord.ui.Modal, title="Add a Recipe · Details"):
             instructions=self.instructions.value.strip() or None,
             image_url=self.image_url.value.strip() or None,
             source_url=url,
-            source_name="TikTok" if "tiktok.com" in url.lower() else None,
+            source_name=get_source_name(url),  # "YouTube", "TikTok", ... or None
         )
 
         # Discord won't let a modal submission respond with another modal directly
@@ -400,7 +401,7 @@ class NoLinkRecipeModal(discord.ui.Modal, title="Add a Recipe · Details"):
     )
     source = discord.ui.TextInput(
         label="Source (optional)",
-        placeholder='e.g. "Handwritten from Sarah" or "Grandma\'s recipe box"',
+        placeholder='e.g. "Handwritten from Sarah" - or paste a link (YouTube, etc.)',
         required=False,
         max_length=100,
     )
@@ -410,6 +411,15 @@ class NoLinkRecipeModal(discord.ui.Modal, title="Add a Recipe · Details"):
         self.cog = cog
 
     async def on_submit(self, interaction: discord.Interaction):
+        source_text = self.source.value.strip()
+        if looks_like_url(source_text):
+            # A link pasted into the Source box (a YouTube video, say) is a real
+            # source link - save it as one, named for its site, instead of printing
+            # the raw URL as the recipe's "name" on the card.
+            source_url, source_name = source_text, get_source_name(source_text)
+        else:
+            source_url, source_name = "", source_text or "Hand-entered"
+
         partial_recipe = dict(
             title=self.recipe_name.value.strip(),
             ingredients=[
@@ -419,8 +429,8 @@ class NoLinkRecipeModal(discord.ui.Modal, title="Add a Recipe · Details"):
             ],
             instructions=self.instructions.value.strip() or None,
             image_url=self.image_url.value.strip() or None,
-            source_url="",
-            source_name=self.source.value.strip() or "Hand-entered",
+            source_url=source_url,
+            source_name=source_name,
         )
 
         # Same modal-can't-open-a-modal bridge as ManualRecipeModal.
@@ -960,6 +970,25 @@ class ViewGroceryListView(discord.ui.View):
         self.add_item(ViewGroceryListSelect(lists))
 
 
+async def reply_to_final_step(interaction: discord.Interaction, text: str) -> None:
+    """Answer the last step of adding a recipe.
+
+    For a hand-entered recipe that last step is a form submitted from a button
+    on Rosie's PRIVATE "click below" message. A followup there is posted as a
+    reply to that private message, which Discord shows everyone as "Original
+    message was deleted" (the recipe was added fine; the banner was just ugly).
+    So write the result into that private message instead. If that isn't
+    possible, fall back to a normal followup - never worse than before. A
+    command that deferred normally (a scraped recipe) just gets its followup."""
+    if interaction.type is discord.InteractionType.modal_submit:
+        try:
+            await interaction.edit_original_response(content=text, view=None)
+            return
+        except discord.HTTPException:
+            pass
+    await interaction.followup.send(text)
+
+
 class Recipe(commands.Cog):
 
     def __init__(self, bot):
@@ -971,23 +1000,17 @@ class Recipe(commands.Cog):
         """Post a recipe to the forum and save it, regardless of where it came from."""
         guild = interaction.guild
         if guild is None:
-            await interaction.followup.send(
-                "❌ This command can only be used in a server."
-            )
+            await reply_to_final_step(interaction, "❌ This command can only be used in a server.")
             return
 
         if self.recipe_forum_id is None:
-            await interaction.followup.send(
-                "❌ Recipe forum is not configured."
-            )
+            await reply_to_final_step(interaction, "❌ Recipe forum is not configured.")
             return
 
         channel = guild.get_channel(self.recipe_forum_id)
 
         if not isinstance(channel, discord.ForumChannel):
-            await interaction.followup.send(
-                "❌ Recipe channel is not a forum channel."
-            )
+            await reply_to_final_step(interaction, "❌ Recipe channel is not a forum channel.")
             return
 
         thread = await create_recipe_post(channel, recipe)
@@ -997,13 +1020,14 @@ class Recipe(commands.Cog):
             # The post exists but the database row doesn't - say so, instead
             # of failing silently and leaving a post search can't find.
             logger.exception("Posted %r but couldn't save it", recipe.title)
-            await interaction.followup.send(
+            await reply_to_final_step(
+                interaction,
                 f"⚠️ Posted <#{thread.id}>, but I couldn't save it to the recipe box ({error}). "
-                "Run `/check_recipes` to fix it."
+                "Run `/check_recipes` to fix it.",
             )
             return
 
-        await interaction.followup.send("✅ Recipe added!")
+        await reply_to_final_step(interaction, "✅ Recipe added!")
 
     @commands.Cog.listener()
     async def on_thread_update(self, before: discord.Thread, after: discord.Thread):

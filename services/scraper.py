@@ -27,16 +27,27 @@ def safe_scrape(method):
         # TODO adding logger.warning(f"Failed to scrape {method.__name__}(): {e}")
 
 
+# How a recipe's source shows on its card ("From **YouTube**"), by the site the
+# link points at. Matched on the host and its subdomains, so m.youtube.com and
+# vm.tiktok.com count too.
+SOURCE_NAMES_BY_DOMAIN = {
+    "cooking.nytimes.com": "New York Times Cooking",
+    "allrecipes.com": "AllRecipes",
+    "seriouseats.com": "Serious Eats",
+    "youtube.com": "YouTube",
+    "youtu.be": "YouTube",
+    "tiktok.com": "TikTok",
+}
+
+
 def get_source_name(url):
-    domain = urlparse(url).netloc
+    host = urlparse(url).netloc.lower().split(":")[0]  # drop any :port
 
-    sources = {
-        "cooking.nytimes.com": "New York Times Cooking",
-        "www.allrecipes.com": "AllRecipes",
-        "www.seriouseats.com": "Serious Eats",
-    }
+    for domain, name in SOURCE_NAMES_BY_DOMAIN.items():
+        if host == domain or host.endswith("." + domain):
+            return name
 
-    return sources.get(domain)
+    return None
 
 
 def fetch_recipe_html(url: str) -> str:

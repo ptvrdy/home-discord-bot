@@ -6,7 +6,7 @@ from unittest.mock import patch
 import httpx
 
 from services import scraper
-from services.scraper import fetch_recipe_html, scrape_recipe
+from services.scraper import fetch_recipe_html, get_source_name, scrape_recipe
 
 NYT_URL = "https://cooking.nytimes.com/recipes/1015819-chocolate-chip-cookies"
 
@@ -95,6 +95,46 @@ class ScrapeRecipeTests(unittest.TestCase):
         with patch.object(scraper.httpx, "get", return_value=blocked):
             with self.assertRaises(httpx.HTTPStatusError):
                 scrape_recipe(NYT_URL)
+
+
+class GetSourceNameTests(unittest.TestCase):
+    def test_youtube_links_in_every_common_form(self):
+        for url in [
+            "https://www.youtube.com/watch?v=okZl55RUJbI",
+            "https://youtube.com/watch?v=abc",
+            "https://m.youtube.com/watch?v=abc",
+            "https://music.youtube.com/watch?v=abc",
+            "https://youtu.be/okZl55RUJbI",
+            "https://www.youtube.com/shorts/abc123",
+        ]:
+            with self.subTest(url=url):
+                self.assertEqual(get_source_name(url), "YouTube")
+
+    def test_tiktok_including_short_links(self):
+        self.assertEqual(get_source_name("https://www.tiktok.com/@chef/video/1"), "TikTok")
+        self.assertEqual(get_source_name("https://vm.tiktok.com/ZMabc/"), "TikTok")
+
+    def test_the_recipe_sites_it_already_knew_still_work_with_or_without_www(self):
+        self.assertEqual(get_source_name("https://cooking.nytimes.com/recipes/1"), "New York Times Cooking")
+        self.assertEqual(get_source_name("https://www.allrecipes.com/recipe/1"), "AllRecipes")
+        self.assertEqual(get_source_name("https://allrecipes.com/recipe/1"), "AllRecipes")
+        self.assertEqual(get_source_name("https://www.seriouseats.com/x"), "Serious Eats")
+
+    def test_unknown_sites_have_no_name(self):
+        self.assertIsNone(get_source_name("https://www.organizeyourselfskinny.com/tuna-salad/"))
+
+    def test_a_lookalike_domain_is_not_mistaken_for_youtube(self):
+        for url in ["https://notyoutube.com/watch", "https://youtube.com.evil.example/watch", "https://example.com/youtube.com"]:
+            with self.subTest(url=url):
+                self.assertIsNone(get_source_name(url))
+
+    def test_the_rest_of_nytimes_is_not_nyt_cooking(self):
+        self.assertIsNone(get_source_name("https://www.nytimes.com/2026/some-article"))
+
+    def test_junk_input(self):
+        self.assertIsNone(get_source_name(""))
+        self.assertIsNone(get_source_name("not a url"))
+        self.assertIsNone(get_source_name("youtube.com/watch?v=abc"))  # no scheme
 
 
 if __name__ == "__main__":

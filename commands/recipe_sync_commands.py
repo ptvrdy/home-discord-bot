@@ -16,10 +16,19 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from services.database import get_all_recipes, save_recipe
+from services.database import (
+    get_all_recipes,
+    get_recipe_by_thread,
+    get_recipe_sources,
+    get_recipe_tags,
+    save_recipe,
+    update_recipe_source,
+)
+from services.embed import create_recipe_embed
 from services.forum import HUMAN_TAGS, forum_tag_label
 from services.pantry_embed import chunk_lines
-from services.recipe_sync import find_mismatches, recipe_from_post
+from services.recipe_sources import SourceFix, plan_source_fix
+from services.recipe_sync import find_mismatches, recipe_from_post, recipe_from_row
 from services.recipe_tags import generate_recipe_tags
 from services.scraper import scrape_recipe
 
@@ -79,6 +88,48 @@ async def reimport_thread(thread: discord.Thread) -> str:
         return f"• <#{thread.id}> — ❌ couldn't save: {error}"
     note = "" if complete else " ⚠️ the post had cut some ingredients or steps short, so check it with /fix"
     return f"• <#{thread.id}> — ✅ {how}{note}"
+
+
+FIX_SOURCES_BATCH = 25  # per run, so one run can't go on for many minutes
+
+
+async def edit_card(thread: discord.Thread, embed: discord.Embed) -> bool:
+    """Replace a post's recipe card. An archived post is reopened first (Discord
+    doesn't reliably allow edits inside one) and put back afterwards, even if
+    the edit fails. Returns whether it had to be reopened."""
+    reopened = thread.archived
+    if reopened:
+        await thread.edit(archived=False)
+    try:
+        starter = await thread.fetch_message(thread.id)
+        await starter.edit(embed=embed)
+    finally:
+        if reopened:
+            await thread.edit(archived=True)
+    return reopened
+
+
+async def apply_source_fix(thread: discord.Thread, row: dict, fix: SourceFix) -> str:
+    """Re-render one post's card with the corrected source, then save it to the
+    database. Card FIRST: if the edit fails the database is left alone, so the
+    next run retries it instead of finding it "already fixed" and leaving the
+    card stale. Returns a line for the report."""
+    current = get_recipe_by_thread(thread.id)
+    recipe = recipe_from_row(
+        {**current, "source_name": fix.source_name, "source_url": fix.source_url},
+        get_recipe_tags(thread.id),
+    )
+    embed = await asyncio.to_thread(create_recipe_embed, recipe)  # may probe a linked image's size
+    reopened = await edit_card(thread, embed)
+    update_recipe_source(thread.id, fix.source_name, fix.source_url)
+
+    notes = []
+    if fix.source_url != (row["source_url"] or ""):
+        notes.append("link restored")
+    if reopened:
+        notes.append("post was archived - reopened, then archived again")
+    suffix = f" ({'; '.join(notes)})" if notes else ""
+    return f"• <#{thread.id}> — now says **{fix.source_name or 'the original recipe'}**{suffix}"
 
 
 class ReimportButton(discord.ui.Button):
@@ -165,6 +216,45 @@ class RecipeSync(commands.Cog):
                 await interaction.followup.send(chunk, view=view, ephemeral=True)
             else:
                 await interaction.followup.send(chunk, ephemeral=True)
+
+
+    @app_commands.command(
+        name="fix_sources",
+        description="Label recipes by where they came from (e.g. YouTube) and refresh their cards",
+    )
+    async def fix_sources(self, interaction: discord.Interaction):
+        forum = self.bot.get_channel(self.recipe_forum_id) if self.recipe_forum_id else None
+        if not isinstance(forum, discord.ForumChannel):
+            await interaction.response.send_message("❌ The recipe forum isn't configured (`RECIPE_FORUM_ID`).", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        plans = [
+            (row, fix)
+            for row in get_recipe_sources()
+            if (fix := plan_source_fix(row["source_url"], row["source_name"]))
+        ]
+        if not plans:
+            await interaction.followup.send("✅ Every recipe's source is already labelled.", ephemeral=True)
+            return
+
+        threads = await forum_threads(forum)
+        lines = [f"🏷️ Updated {min(len(plans), FIX_SOURCES_BATCH)} of {len(plans)} recipes:"]
+        for row, fix in plans[:FIX_SOURCES_BATCH]:
+            thread = threads.get(row["discord_thread_id"])
+            if thread is None:
+                lines.append(f"• {row['title']} — ❌ its post wasn't found in the forum")
+                continue
+            try:
+                lines.append(await apply_source_fix(thread, row, fix))
+            except Exception as error:
+                logger.exception("Couldn't update the source on %r", row["title"])
+                lines.append(f"• <#{thread.id}> — ❌ couldn't update the card ({error}); left as it was")
+
+        if len(plans) > FIX_SOURCES_BATCH:
+            lines.append(f"\n_{len(plans) - FIX_SOURCES_BATCH} more — run /fix_sources again for the rest._")
+        for chunk in chunk_lines(lines):
+            await interaction.followup.send(chunk, ephemeral=True)
 
 
 async def setup(bot):

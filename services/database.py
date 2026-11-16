@@ -1423,6 +1423,42 @@ def get_all_recipes(tag: str | None = None, database_path: Path = DATABASE_PATH)
             results.append(data)
         return results
 
+def get_recipe_sources(database_path: Path = DATABASE_PATH) -> list[dict]:
+    """Each recipe's post ID, title and where it came from (source link and
+    name) - what /fix_sources checks. A recipe with no post is skipped, since
+    there's no card to update."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT discord_thread_id, title, source_url, source_name
+            FROM recipes
+            WHERE discord_thread_id IS NOT NULL
+            ORDER BY title
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def update_recipe_source(
+    discord_thread_id: int,
+    source_name: str | None,
+    source_url: str,
+    database_path: Path = DATABASE_PATH,
+) -> bool:
+    """Change a recipe's source name and link and nothing else - not the full
+    save_recipe(), which also rewrites tags and status. Returns whether a
+    recipe was found."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        cursor = connection.execute(
+            "UPDATE recipes SET source_name = ?, source_url = ? WHERE discord_thread_id = ?",
+            (source_name, source_url, discord_thread_id),
+        )
+        return cursor.rowcount > 0
+
+
 def merge_pantry_products(remove_id: int, keep_id: int, database_path: Path = DATABASE_PATH) -> None:
     """After Grocy merges one product into another: point everything Rosie
     learned about the removed product at the kept one, and forget the

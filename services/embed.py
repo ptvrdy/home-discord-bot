@@ -264,6 +264,7 @@ HELP_SECTIONS = [
         [
             ("/check_setup", "Verify every configured tag actually matches a tag on the forum."),
             ("/check_recipes", "Compare the recipe forum with the database, and re-import posts it's missing."),
+            ("/fix_sources", "Label recipes by where they came from (e.g. YouTube) and refresh their cards."),
             ("/check_calendar_setup", "Verify the Google service account can reach each configured calendar."),
             ("/backup_now", "Manually back up the database instead of waiting for the automatic daily 3am backup."),
         ],
