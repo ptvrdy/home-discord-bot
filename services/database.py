@@ -1459,6 +1459,18 @@ def update_recipe_source(
         return cursor.rowcount > 0
 
 
+def delete_recipe_by_thread(discord_thread_id: int, database_path: Path = DATABASE_PATH) -> bool:
+    """Remove a recipe whose forum post no longer exists - its tags and cooking
+    log/reviews go with it (ON DELETE CASCADE). Permanent: callers back the
+    database up first. Returns whether a recipe was deleted."""
+    initialize_database(database_path)
+    with _database_connection(database_path) as connection:
+        cursor = connection.execute(
+            "DELETE FROM recipes WHERE discord_thread_id = ?", (discord_thread_id,)
+        )
+        return cursor.rowcount > 0
+
+
 def merge_pantry_products(remove_id: int, keep_id: int, database_path: Path = DATABASE_PATH) -> None:
     """After Grocy merges one product into another: point everything Rosie
     learned about the removed product at the kept one, and forget the

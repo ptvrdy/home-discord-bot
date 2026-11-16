@@ -16,7 +16,9 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from services.backup import backup_database
 from services.database import (
+    delete_recipe_by_thread,
     get_all_recipes,
     get_recipe_by_thread,
     get_recipe_sources,
@@ -27,7 +29,7 @@ from services.database import (
 from services.embed import create_recipe_embed
 from services.forum import HUMAN_TAGS, forum_tag_label
 from services.pantry_embed import chunk_lines
-from services.recipe_sources import SourceFix, plan_source_fix
+from services.recipe_sources import SourceFix, plan_source_fix, unlabelled_sites
 from services.recipe_sync import find_mismatches, recipe_from_post, recipe_from_row
 from services.recipe_tags import generate_recipe_tags
 from services.scraper import scrape_recipe
@@ -165,10 +167,67 @@ class ReimportButton(discord.ui.Button):
             await interaction.followup.send(chunk, ephemeral=True)
 
 
+async def post_is_gone(client: discord.Client, thread_id: int) -> bool:
+    """True only when Discord positively says the post doesn't exist. Any other
+    failure (a hiccup, a permission problem) is NOT proof - and forgetting is
+    permanent - so it counts as "not gone"."""
+    try:
+        await client.fetch_channel(thread_id)
+    except discord.NotFound:
+        return True
+    except discord.HTTPException:
+        return False
+    return False
+
+
+class ForgetButton(discord.ui.Button):
+    """Delete database recipes whose forum post was deleted. Backs the
+    database up first, and re-checks each post is really gone."""
+
+    def __init__(self, rows: list[dict]):
+        super().__init__(label=f"🗑️ Forget {len(rows)} deleted", style=discord.ButtonStyle.danger)
+        self.rows = rows
+
+    async def callback(self, interaction: discord.Interaction):
+        if getattr(self.view, "forget_claimed", False):
+            await interaction.response.send_message("⏳ Already on it.", ephemeral=True)
+            return
+        self.view.forget_claimed = True
+        await interaction.response.defer()
+
+        try:
+            backup_path = await asyncio.to_thread(backup_database)
+        except Exception as error:
+            logger.exception("Backup before forgetting recipes failed")
+            await interaction.edit_original_response(
+                content=f"❌ I couldn't back up the database first ({error}), so nothing was deleted.", view=None
+            )
+            return
+
+        lines = [f"🗑️ Forgot (backup saved as `{backup_path.name}`):"]
+        for row in self.rows:
+            if not await post_is_gone(interaction.client, row["discord_thread_id"]):
+                lines.append(f"• {row['title']} — skipped, its post may still exist")
+            elif delete_recipe_by_thread(row["discord_thread_id"]):
+                lines.append(f"• {row['title']} — forgotten")
+            else:
+                lines.append(f"• {row['title']} — already gone from the database")
+        chunks = chunk_lines(lines)
+        await interaction.edit_original_response(content=chunks[0], view=None)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(chunk, ephemeral=True)
+
+
 class ReimportView(discord.ui.View):
-    def __init__(self, thread_ids: list[int]):
+    """The /check_recipes buttons: re-import posts the database is missing,
+    and/or forget recipes whose post is gone."""
+
+    def __init__(self, thread_ids: list[int], forgettable: list[dict] | None = None):
         super().__init__(timeout=900)
-        self.add_item(ReimportButton(thread_ids))
+        if thread_ids:
+            self.add_item(ReimportButton(thread_ids))
+        if forgettable:
+            self.add_item(ForgetButton(forgettable))
 
 
 class RecipeSync(commands.Cog):
@@ -205,12 +264,12 @@ class RecipeSync(commands.Cog):
         if missing_in_forum:
             lines.append(
                 f"\n**In the database but the post is gone ({len(missing_in_forum)})** — "
-                "probably deleted on purpose; left as they are:"
+                "probably deleted on purpose. Use the button to forget them (backs up first):"
             )
             lines += [f"• {row['title']}" for row in missing_in_forum]
 
         chunks = chunk_lines(lines)
-        view = ReimportView([thread_id for thread_id, _ in missing_in_db]) if missing_in_db else None
+        view = ReimportView([thread_id for thread_id, _ in missing_in_db], missing_in_forum)
         for index, chunk in enumerate(chunks):
             if view and index == len(chunks) - 1:
                 await interaction.followup.send(chunk, view=view, ephemeral=True)
@@ -229,13 +288,20 @@ class RecipeSync(commands.Cog):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
 
+        sources = get_recipe_sources()
         plans = [
             (row, fix)
-            for row in get_recipe_sources()
+            for row in sources
             if (fix := plan_source_fix(row["source_url"], row["source_name"]))
         ]
+        unknown = unlabelled_sites(sources)
+        unknown_lines = []
+        if unknown:
+            unknown_lines = ["\n**Sites Rosie has no name for yet** (tell me which to add):"]
+            unknown_lines += [f"• {site} — {', '.join(titles)}" for site, titles in unknown.items()]
         if not plans:
-            await interaction.followup.send("✅ Every recipe's source is already labelled.", ephemeral=True)
+            for chunk in chunk_lines(["✅ Every recipe's source is already labelled."] + unknown_lines):
+                await interaction.followup.send(chunk, ephemeral=True)
             return
 
         threads = await forum_threads(forum)
@@ -253,7 +319,7 @@ class RecipeSync(commands.Cog):
 
         if len(plans) > FIX_SOURCES_BATCH:
             lines.append(f"\n_{len(plans) - FIX_SOURCES_BATCH} more — run /fix_sources again for the rest._")
-        for chunk in chunk_lines(lines):
+        for chunk in chunk_lines(lines + unknown_lines):
             await interaction.followup.send(chunk, ephemeral=True)
 
 

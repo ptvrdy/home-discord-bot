@@ -187,6 +187,17 @@ class RequesterOnlyView(discord.ui.View):
     def __init__(self, requester_id: int):
         super().__init__(timeout=300)
         self.requester_id = requester_id
+        self.booking_started = False
+
+    def claim_booking(self) -> bool:
+        """True for the first booking click only. The buttons stay live while
+        Rosie checks the calendar and books, so a double-click used to run it
+        twice: the second pass saw the first one's new event, called it a
+        conflict, and replaced the success message with a false warning."""
+        if self.booking_started:
+            return False
+        self.booking_started = True
+        return True
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.requester_id:
@@ -349,6 +360,9 @@ class TaskAlternativeButton(discord.ui.Button):
         self.requester_id = requester_id
 
     async def callback(self, interaction: discord.Interaction):
+        if not self.view.claim_booking():
+            await interaction.response.defer()  # already booking; leave the message alone
+            return
         await interaction.response.defer()
         await _confirm_and_book(
             interaction, self.task_name, self.start, self.end, self.week_start, self.requester_id
@@ -389,6 +403,9 @@ class TaskSlotView(RequesterOnlyView):
 
     @discord.ui.button(label="Confirm", style=discord.ButtonStyle.success)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.claim_booking():
+            await interaction.response.defer()  # already booking; leave the message alone
+            return
         await interaction.response.defer()
         await _confirm_and_book(
             interaction, self.task_name, self.start, self.end, self.week_start, self.requester_id

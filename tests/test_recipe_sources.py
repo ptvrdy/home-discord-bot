@@ -1,6 +1,6 @@
 import unittest
 
-from services.recipe_sources import SourceFix, looks_like_url, plan_source_fix
+from services.recipe_sources import SourceFix, looks_like_url, plan_source_fix, unlabelled_sites
 
 YOUTUBE = "https://www.youtube.com/watch?v=okZl55RUJbI"
 
@@ -55,6 +55,19 @@ class PlanSourceFixTests(unittest.TestCase):
             with self.subTest(url=url, name=name):
                 fix = plan_source_fix(url, name)
                 self.assertIsNone(plan_source_fix(fix.source_url, fix.source_name))
+
+
+class UnlabelledSitesTests(unittest.TestCase):
+    def test_groups_unknown_sites_busiest_first_and_skips_the_rest(self):
+        rows = [
+            {"title": "A", "source_url": "https://www.foo.com/a", "source_name": None},
+            {"title": "B", "source_url": "https://bar.org/b", "source_name": ""},
+            {"title": "C", "source_url": "https://foo.com/c", "source_name": None},
+            {"title": "D", "source_url": YOUTUBE, "source_name": None},  # known site
+            {"title": "E", "source_url": "https://baz.com/e", "source_name": "Hand-entered"},  # named
+            {"title": "F", "source_url": "", "source_name": None},  # no link
+        ]
+        self.assertEqual(unlabelled_sites(rows), {"foo.com": ["A", "C"], "bar.org": ["B"]})
 
 
 if __name__ == "__main__":

@@ -8,9 +8,13 @@ import discord
 
 from commands import recipe_commands, recipe_sync_commands
 from commands.recipe_commands import NoLinkRecipeModal, ManualRecipeModal, reply_to_final_step
-from commands.recipe_sync_commands import FIX_SOURCES_BATCH, RecipeSync, edit_card
+from commands.recipe_sync_commands import (
+    FIX_SOURCES_BATCH, ForgetButton, ReimportView, RecipeSync, edit_card, post_is_gone,
+)
 from models.recipe_card import Recipe
 from services.database import (
+    add_cooking_log,
+    delete_recipe_by_thread,
     get_recipe_by_thread,
     get_recipe_sources,
     get_recipe_tags,
@@ -245,12 +249,100 @@ class FixSourcesCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events, [])
         self.assertIn("already labelled", sent)
 
+    async def test_lists_sites_it_has_no_name_for_even_when_nothing_needs_fixing(self):
+        row = _row(10, url="https://www.organizeyourselfskinny.com/tuna/", title="Tuna Salad")
+        events, sent = await self._invoke([row], {10: _thread(10)})
+        self.assertEqual(events, [])
+        self.assertIn("organizeyourselfskinny.com", sent)
+        self.assertIn("Tuna Salad", sent)
+
     async def test_stops_at_the_batch_limit_and_says_to_run_again(self):
         count = FIX_SOURCES_BATCH + 3
         threads = {i: _thread(i) for i in range(count)}
         events, sent = await self._invoke([_row(i) for i in range(count)], threads)
         self.assertEqual(len([e for e in events if e[0] == "db"]), FIX_SOURCES_BATCH)
         self.assertIn("3 more", sent)
+
+
+class DeleteRecipeDatabaseTests(unittest.TestCase):
+    def test_deleting_a_recipe_takes_its_tags_and_reviews_with_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "recipes.db"
+            for title, thread in [("Gone", 1), ("Kept", 2)]:
+                save_recipe(Recipe(title=title, ingredients=["a"], instructions="b",
+                                   source_url="", tags=["needs_review", "pasta"]), thread, path)
+            add_cooking_log(1, __import__("datetime").datetime(2026, 7, 1, tzinfo=__import__("datetime").timezone.utc),
+                            "Made", "favorite", "n", "t", 5, "Peyton", path)
+
+            self.assertTrue(delete_recipe_by_thread(1, path))
+            self.assertFalse(delete_recipe_by_thread(1, path))  # already gone
+
+            self.assertIsNone(get_recipe_by_thread(1, path))
+            self.assertEqual(get_recipe_tags(1, path), [])
+            self.assertEqual(get_recipe_tags(2, path), ["needs_review", "pasta"])  # the other is untouched
+            self.assertEqual([r["title"] for r in get_recipe_sources(path)], ["Kept"])
+
+
+class ForgetButtonTests(unittest.IsolatedAsyncioTestCase):
+    def _click(self, rows, fetch_effect):
+        button = ForgetButton(rows)
+        view = ReimportView([], rows)
+        button._view = view
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.response.send_message = AsyncMock()
+        interaction.edit_original_response = AsyncMock()
+        interaction.followup.send = AsyncMock()
+        interaction.client.fetch_channel = AsyncMock(side_effect=fetch_effect)
+        return button, interaction
+
+    def _not_found(self):
+        return discord.NotFound(MagicMock(status=404), "unknown channel")
+
+    async def test_backs_up_first_then_forgets_a_post_discord_says_is_gone(self):
+        order = []
+        rows = [{"discord_thread_id": 5, "title": "Tarts"}]
+        button, interaction = self._click(rows, self._not_found())
+        with patch.object(recipe_sync_commands, "backup_database", side_effect=lambda: order.append("backup") or Path("recipes_1.db")),              patch.object(recipe_sync_commands, "delete_recipe_by_thread", side_effect=lambda t: order.append("delete") or True):
+            await button.callback(interaction)
+        self.assertEqual(order, ["backup", "delete"])
+        self.assertIn("forgotten", interaction.edit_original_response.await_args.kwargs["content"])
+
+    async def test_a_failed_backup_deletes_nothing(self):
+        button, interaction = self._click([{"discord_thread_id": 5, "title": "Tarts"}], self._not_found())
+        with patch.object(recipe_sync_commands, "backup_database", side_effect=OSError("disk full")),              patch.object(recipe_sync_commands, "delete_recipe_by_thread") as delete:
+            await button.callback(interaction)
+        delete.assert_not_called()
+        self.assertIn("nothing was deleted", interaction.edit_original_response.await_args.kwargs["content"])
+
+    async def test_a_post_that_may_still_exist_is_not_forgotten(self):
+        # Not "Unknown Channel" - a hiccup or permissions problem isn't proof.
+        button, interaction = self._click(
+            [{"discord_thread_id": 5, "title": "Tarts"}], discord.HTTPException(MagicMock(status=500), "oops")
+        )
+        with patch.object(recipe_sync_commands, "backup_database", return_value=Path("b.db")),              patch.object(recipe_sync_commands, "delete_recipe_by_thread") as delete:
+            await button.callback(interaction)
+        delete.assert_not_called()
+        self.assertIn("skipped", interaction.edit_original_response.await_args.kwargs["content"])
+
+    async def test_a_second_click_does_not_run_it_twice(self):
+        button, interaction = self._click([{"discord_thread_id": 5, "title": "Tarts"}], self._not_found())
+        with patch.object(recipe_sync_commands, "backup_database", return_value=Path("b.db")) as backup,              patch.object(recipe_sync_commands, "delete_recipe_by_thread", return_value=True):
+            await button.callback(interaction)
+            await button.callback(interaction)
+        backup.assert_called_once()
+
+    async def test_post_is_gone_only_on_not_found(self):
+        client = MagicMock()
+        client.fetch_channel = AsyncMock(side_effect=self._not_found())
+        self.assertTrue(await post_is_gone(client, 1))
+        client.fetch_channel = AsyncMock(return_value=object())
+        self.assertFalse(await post_is_gone(client, 1))
+
+    def test_the_view_offers_forget_only_when_there_is_something_to_forget(self):
+        self.assertEqual(len(ReimportView([], [{"discord_thread_id": 1, "title": "x"}]).children), 1)
+        self.assertEqual(len(ReimportView([7], []).children), 1)
+        self.assertEqual(len(ReimportView([7], [{"discord_thread_id": 1, "title": "x"}]).children), 2)
 
 
 if __name__ == "__main__":

@@ -51,3 +51,19 @@ def plan_source_fix(source_url: str | None, source_name: str | None) -> SourceFi
     if fix == SourceFix(source_name, source_url or ""):
         return None
     return fix
+
+
+def unlabelled_sites(rows: list[dict]) -> dict[str, list[str]]:
+    """Recipes that have a source link but no site name, because the site isn't
+    in SOURCE_NAMES_BY_DOMAIN: {domain: [recipe titles]}, busiest domain first.
+    This is the list to look through when deciding which sites to add."""
+    from urllib.parse import urlparse
+
+    by_site: dict[str, list[str]] = {}
+    for row in rows:
+        url = (row["source_url"] or "").strip()
+        if not url or (row["source_name"] or "").strip() or get_source_name(url):
+            continue
+        site = urlparse(url).netloc.lower().split(":")[0].removeprefix("www.")
+        by_site.setdefault(site or "(unreadable link)", []).append(row["title"])
+    return dict(sorted(by_site.items(), key=lambda item: (-len(item[1]), item[0])))
