@@ -50,16 +50,16 @@ Run `/help` in Discord any time for a categorized list of every command, or see
   with the database. The full history is always in SQLite even if the rendered
   message ever hits Discord's embed character limit and has to drop old entries
   from view.
-- **`/fix`** (run inside a recipe's thread) — corrects a recipe's name,
+- **`/fix [what]`** (run inside a recipe's thread; `what` picks name/times/servings (the default), image, instructions, or tags) — corrects a recipe's name,
   prep/cook/total time, or servings (the fields most likely to come back wrong
   from a bad scrape), prefilled with the current values. Re-saves to SQLite,
   regenerates and reapplies forum tags, renames the thread if the title changed,
   and edits the recipe card in place — all while preserving whatever human status
   (⭐ Favorite, etc.) the recipe already has. Tags are *unioned* with what's
-  already stored, not replaced, so a manual `/tags` addition never gets silently
+  already stored, not replaced, so a manual `/fix tags` addition never gets silently
   dropped by a later `/fix`.
-- **`/fix_image`** (run inside a recipe's thread) — adds or corrects just the
-  image, prefilled with the current URL. Separate from `/fix` since Discord caps
+- **`/fix image`** (the *image* choice of `/fix`) — adds or corrects just the
+  image, prefilled with the current URL. Separate from the default `/fix` form since Discord caps
   modals at 5 fields and that one's already full; leaving it blank removes the
   image entirely. The image is downloaded and attached to the recipe card itself,
   so it keeps showing even if the site later moves it or blocks Discord. Its
@@ -67,7 +67,7 @@ Run `/help` in Discord any time for a categorized list of every command, or see
   than a direct image), a dead link, an oversized or unsupported image, or a
   missing `http(s)://` gets a clear message and changes nothing. If the site only
   refuses Rosie's download, the link is saved as-is instead.
-- **`/add_instructions`** (run inside a recipe's thread) — appends new steps to
+- **`/fix instructions`** (the *instructions* choice of `/fix`) — appends new steps to
   the end of a recipe's instructions instead of replacing them, for when a
   scrape or manual entry missed the tail end. Takes just the new steps (not the
   whole thing) since the instructions follow-up message isn't tracked by ID the
@@ -75,7 +75,7 @@ Run `/help` in Discord any time for a categorized list of every command, or see
   or edit in place — it posts a fresh instructions embed with the combined text
   instead; the old one (and any manual comment used as a stopgap) can be deleted
   by hand once it's redundant.
-- **`/tags`** (run inside a recipe's thread) — a multi-select menu, pre-checked
+- **`/fix tags`** (the *tags* choice of `/fix`) — a multi-select menu, pre-checked
   with the recipe's current tags, for manually adding or removing any of the 16
   non-human tags (e.g. marking a recipe `dinner` even though nothing in its text
   matched that keyword). Syncs immediately to both SQLite and the thread's
@@ -92,10 +92,14 @@ Run `/help` in Discord any time for a categorized list of every command, or see
 - **`/cooking_stats`** — box size, review backlog, top-rated recipes (by average
   rating), most-cooked recipes (counted from logged "Made" entries only), and
   how many entries each household member has logged.
-- **`/random [tag]`** — suggests a random recipe, optionally filtered to one of
-  the configured tags, with a jump link to its thread.
-- **`/shopping_list`** (run inside a recipe's thread) — adds the recipe's
-  ingredients to an OurGroceries list. Prompts you to pick which list (built
+- **`/suggest_recipe [count] [tag]`** — suggests a random recipe, optionally filtered to
+  one of the configured tags, with a jump link to its thread. With a count of 2-5
+  it picks that many and runs the combined-shopping-list flow (as
+  `/shopping_list` does with several recipes), but the recipes are chosen for you.
+- **`/shopping_list [recipe_1..recipe_5]`** — adds a recipe's
+  ingredients to an OurGroceries list. Run it inside a recipe's thread with
+  nothing filled in to use that recipe, or name up to 5 recipes (autocomplete
+  search by title) to merge them into one deduplicated shopping trip. Prompts you to pick which list (built
   dynamically from whatever lists exist on the account, e.g. per-store lists),
   then shows every ingredient as a toggle button (pre-checked, tap to
   uncheck) so you can skip anything you already have before anything's
@@ -106,14 +110,6 @@ Run `/help` in Discord any time for a categorized list of every command, or see
   already have them) are dropped first. After adding, an "Undo" button lets
   you remove exactly what was just added. See
   [OurGroceries integration](#ourgroceries-integration) below.
-- **`/combine_recipes`** — pick up to 5 recipes (autocomplete search by title
-  as you type each one) and merge their ingredients into a single
-  deduplicated shopping trip, then pick a list and toggle ingredients exactly
-  like `/shopping_list` — same pantry-staple prioritization, cross-list
-  duplicate check, and Undo button.
-- **`/meal_plan [count] [tag]`** — the same combined-shopping-list flow as
-  `/combine_recipes`, but the recipes are picked for you at random (1-5,
-  optionally filtered by tag) instead of searched by name.
 - **`/grocery_list`** — pick one of your OurGroceries lists and see what's
   currently on it (and how many items are already crossed off), without
   leaving Discord.
@@ -549,7 +545,7 @@ second.
 
 - Broader tag set — blocked on Discord's 20-tag-per-forum cap; would need to
   retire an existing tag, or track new categories in SQLite only (searchable via
-  `/find_ingredient`/`/random`, not shown as a forum tag chip)
+  `/find_ingredient`/`/suggest_recipe`, not shown as a forum tag chip)
 - `/recipe_history` or similar for recipes whose journal has grown past what fits
   in a single Discord embed
 - Household hub — ✅ chore tracking (`/done`, nudges), ✅ Google Calendar
@@ -571,7 +567,7 @@ second.
   completions in a row, shown on `#this-week`, `/chore_stats`, and in the
   `#nudges` reminder, ✅ a house wishlist (`/want`, `/wishlist`, ✅ reaction to
   mark bought) with best-effort title/image/price scraping from any link,
-  ✅ a weekly meal plan (`/plan_meal`, `/clear_meal_plan`) shown as a
+  ✅ a weekly meal plan (`/meal_plan`, `/meal_plan_clear`) shown as a
   Breakfast/Lunch/Dinner list on `#this-week`, deliberately not tied to a
   specific day. Every originally-scoped and subsequently requested piece is
   built.

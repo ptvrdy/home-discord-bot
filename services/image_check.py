@@ -1,4 +1,4 @@
-"""Download a recipe image so /fix_image can attach the bytes to the recipe
+"""Download a recipe image so /fix image can attach the bytes to the recipe
 card itself, instead of asking Discord to hotlink an outside URL (which many
 sites block, leaving a card with no picture and no error). Split like
 nyt_fallback.py: pure helpers (unit tested) plus a thin network wrapper."""
@@ -83,7 +83,7 @@ def image_extension(content_type: str | None, name: str) -> str | None:
 
 @dataclass
 class PreparedImage:
-    """What /fix_image should save and show for a pasted link."""
+    """What /fix image should save and show for a pasted link."""
 
     image_url: str            # stored on the recipe: "attachment://..." or the link itself
     data: bytes | None = None  # attach these bytes to the card, as `filename`

@@ -105,7 +105,7 @@ def create_recipe_embed(recipe: Recipe) -> discord.Embed:
 
     if recipe.image_url:
         if recipe.image_url.startswith(ATTACHMENT_PREFIX):
-            # Attached to this very message (see /fix_image); layout was
+            # Attached to this very message (see /fix image); layout was
             # decided at upload time and lives in the file name.
             if _THUMBNAIL_MARKER in recipe.image_url:
                 embed.set_thumbnail(url=recipe.image_url)
@@ -182,17 +182,14 @@ HELP_SECTIONS = [
     (
         "🏷️ Organize & Fix",
         [
-            ("/tags", "Manually add or remove this recipe's tags. (run in its thread)"),
-            ("/fix", "Correct a recipe's name, times, or servings. (run in its thread)"),
-            ("/fix_image", "Add or correct a recipe's image. (run in its thread)"),
-            ("/add_instructions", "Append steps to a recipe's instructions. (run in its thread)"),
+            ("/fix", "Edit a recipe: name/times/servings (default), image, more instructions, or tags. (run in its thread)"),
         ],
     ),
     (
         "🔍 Find",
         [
             ("/find_ingredient <query>", "Search recipes by title or ingredient."),
-            ("/random [tag]", "Suggest a random recipe, optionally filtered by tag."),
+            ("/suggest_recipe [count] [tag]", "Suggest a random recipe (or 2-5, with a combined shopping list), optionally filtered by tag."),
             ("/needs_review", "List every recipe still marked Needs Review."),
         ],
     ),
@@ -206,9 +203,7 @@ HELP_SECTIONS = [
     (
         "🛒 Grocery Shopping",
         [
-            ("/shopping_list", "Add a recipe's ingredients to an OurGroceries list. (run in its thread)"),
-            ("/combine_recipes", "Combine ingredients from up to 5 recipes into one shopping list."),
-            ("/meal_plan", "Suggest random recipes and combine their ingredients into one shopping list."),
+            ("/shopping_list", "Put a recipe's ingredients on an OurGroceries list. Name up to 5 recipes to combine them, or run it in a recipe's thread."),
             ("/grocery_list", "See what's currently on one of your OurGroceries lists."),
         ],
     ),
@@ -225,8 +220,8 @@ HELP_SECTIONS = [
     (
         "🍽️ Meal Plan",
         [
-            ("/plan_meal <meal> <recipe>", "Add a recipe to this week's Breakfast/Lunch/Dinner list, not tied to a specific day. Shows on #this-week; auto-clears weekly."),
-            ("/clear_meal_plan", "Clear this week's food list and start over."),
+            ("/meal_plan <meal> <recipe>", "Add a recipe to this week's Breakfast/Lunch/Dinner list, not tied to a specific day. Shows on #this-week; auto-clears weekly."),
+            ("/meal_plan_clear", "Clear this week's food list and start over."),
         ],
     ),
     (

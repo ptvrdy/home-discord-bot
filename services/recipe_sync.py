@@ -3,7 +3,7 @@ from its forum post when the database lost it.
 
 The forum post and the database row are written separately (post first,
 then row), so a failure in between leaves a post the database doesn't know
-about - invisible to /find_ingredient, /random, /what_can_i_make, /review.
+about - invisible to /find_ingredient, /suggest_recipe, /what_can_i_make, /review.
 Pure helpers here; /check_recipes (commands/recipe_sync_commands.py) does
 the Discord and scraping parts.
 """
@@ -114,7 +114,7 @@ def recipe_from_post(card: dict, instructions_text: str | None, tag_names: list[
 
     image = (card.get("image") or card.get("thumbnail") or {}).get("url")
     if image:
-        # A photo saved onto the card by /fix_image comes back as an expiring
+        # A photo saved onto the card by /fix image comes back as an expiring
         # Discord CDN link; store the stable attachment reference instead.
         file_name = image.split("?")[0].rsplit("/", 1)[-1]
         if "discordapp" in image and file_name.startswith("recipe-image"):

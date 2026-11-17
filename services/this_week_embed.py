@@ -105,9 +105,9 @@ def _meal_plan_field_value(meal_plan_items: list[dict]) -> str:
             sections.append(f"**{label}**\n{lines}")
 
     if not sections:
-        # Not italicized: the underscore in /plan_meal would end the italics
-        # early, leaving a stray "_" on screen and "/planmeal" for the command.
-        return "Nothing planned yet — `/plan_meal` to add one"
+        # Not italicized: the underscore in /meal_plan would end the italics
+        # early, leaving a stray "_" on screen and "/mealplan" for the command.
+        return "Nothing planned yet — `/meal_plan` to add one"
     return "\n\n".join(sections)
 
 

@@ -188,7 +188,7 @@ async def create_recipe_post(
     # The post already exists at this point, so a failure here must not stop
     # the caller from saving the recipe - that's how posts ended up missing
     # from the database. The instructions are in the database either way,
-    # and /add_instructions can repost them.
+    # and /fix instructions can repost them.
     instructions_embed = build_instructions_embed(recipe)
     if instructions_embed is not None:
         try:

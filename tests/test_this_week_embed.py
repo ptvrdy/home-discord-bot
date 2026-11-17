@@ -69,7 +69,7 @@ class BuildThisWeekEmbedTests(unittest.TestCase):
     def test_empty_food_section_has_no_stray_underscores(self):
         embed = build_this_week_embed(MONDAY, [], [], NOW)
         food = next(f for f in embed.fields if f.name == "🍽️ This Week's Food")
-        self.assertEqual(food.value, "Nothing planned yet — `/plan_meal` to add one")
+        self.assertEqual(food.value, "Nothing planned yet — `/meal_plan` to add one")
 
     def test_empty_day_shows_nothing_scheduled(self):
         embed = build_this_week_embed(MONDAY, [], [], NOW)

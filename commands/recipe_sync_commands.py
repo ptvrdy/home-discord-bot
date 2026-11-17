@@ -2,7 +2,7 @@
 any posts the database is missing.
 
 A post and its database row are written separately, so a failure in between
-(see publish_recipe) can leave a post that /find_ingredient, /random,
+(see publish_recipe) can leave a post that /find_ingredient, /suggest_recipe,
 /what_can_i_make, and /review can't see. This finds those - and database
 rows whose post was deleted - and repairs the first kind: re-scraping the
 original link when there is one, otherwise rebuilding from the post itself.
@@ -353,7 +353,7 @@ class RecipeSync(commands.Cog):
 
         lines = [f"📋 {len(threads)} posts in the forum, {len(rows)} recipes in the database."]
         if missing_in_db:
-            lines.append(f"\n**Posts the database is missing ({len(missing_in_db)})** — invisible to search, /random, /review:")
+            lines.append(f"\n**Posts the database is missing ({len(missing_in_db)})** — invisible to search, /suggest_recipe, /review:")
             lines += [f"• <#{thread_id}>" for thread_id, _ in missing_in_db]
         if missing_in_forum:
             lines.append(

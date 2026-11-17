@@ -155,8 +155,7 @@ class RecipeEmbedTests(unittest.TestCase):
 
         self.assertIn("/recipe", fields["📥 Import"])
         self.assertIn("/shopping_list", fields["🛒 Grocery Shopping"])
-        self.assertIn("/combine_recipes", fields["🛒 Grocery Shopping"])
-        self.assertIn("/meal_plan", fields["🛒 Grocery Shopping"])
+        self.assertIn("/suggest_recipe", fields["🔍 Find"])
         self.assertIn("/grocery_list", fields["🛒 Grocery Shopping"])
         self.assertIn("/done", fields["🧹 Household Chores"])
         self.assertIn("/undo_done", fields["🧹 Household Chores"])

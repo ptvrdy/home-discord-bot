@@ -17,7 +17,6 @@ from services.database import (
     get_cooking_log_entries,
     get_cooking_stats,
     get_journal_message_id,
-    get_random_recipe,
     get_random_recipes,
     get_recipe_by_thread,
     get_recipe_by_title,
@@ -66,6 +65,13 @@ RECIPE_STATUS_CHOICES = [
     app_commands.Choice(name="✅ Made Before", value="made_before"),
     app_commands.Choice(name="🔁 Make Again", value="make_again"),
     app_commands.Choice(name="⭐ Favorite", value="favorite"),
+]
+
+RECIPE_EDIT_CHOICES = [
+    app_commands.Choice(name="Name, times, servings", value="details"),
+    app_commands.Choice(name="Image", value="image"),
+    app_commands.Choice(name="Add instructions", value="instructions"),
+    app_commands.Choice(name="Tags", value="tags"),
 ]
 
 RECIPE_TAG_CHOICES = [
@@ -1141,19 +1147,23 @@ class Recipe(commands.Cog):
         await interaction.response.send_modal(NoLinkRecipeModal(self))
 
     @app_commands.command(
-        name="random",
-        description="Get a random recipe suggestion",
+        name="suggest_recipe",
+        description="Suggest a random recipe - or 2-5 to combine into one shopping list",
     )
-    @app_commands.describe(tag="Optional: only suggest recipes with this tag")
+    @app_commands.describe(
+        count="How many recipes to suggest (1-5, default 1). 2 or more also offers a shopping list",
+        tag="Optional: only suggest recipes with this tag",
+    )
     @app_commands.choices(tag=RECIPE_TAG_CHOICES)
-    async def random_recipe(
+    async def suggest_recipe(
         self,
         interaction: discord.Interaction,
+        count: app_commands.Range[int, 1, 5] = 1,
         tag: app_commands.Choice[str] | None = None,
     ):
-        recipe = get_random_recipe(tag.value if tag else None)
+        recipes = get_random_recipes(count, tag.value if tag else None)
 
-        if recipe is None:
+        if not recipes:
             message = (
                 f"🎲 No recipes tagged {tag.name} yet!"
                 if tag
@@ -1162,8 +1172,43 @@ class Recipe(commands.Cog):
             await interaction.response.send_message(message, ephemeral=True)
             return
 
-        await interaction.response.send_message(
-            f"🎲 How about **{recipe['title']}**?\n<#{recipe['discord_thread_id']}>"
+        if len(recipes) == 1:
+            recipe = recipes[0]
+            await interaction.response.send_message(
+                f"🎲 How about **{recipe['title']}**?\n<#{recipe['discord_thread_id']}>"
+            )
+            return
+
+        combined_ingredients = combine_recipe_ingredients(recipes)
+        combined_title = build_combined_recipe_title(recipes, limit=COMBINE_TITLE_DISPLAY_LIMIT)
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        try:
+            lists = await get_grocery_lists()
+        except Exception as error:
+            await interaction.followup.send(
+                f"❌ I couldn't connect to OurGroceries: {error}",
+                ephemeral=True,
+            )
+            return
+
+        if not lists:
+            await interaction.followup.send(
+                "❌ No OurGroceries lists found on that account.",
+                ephemeral=True,
+            )
+            return
+
+        recipe_lines = "\n".join(
+            f"• **{recipe['title']}** — <#{recipe['discord_thread_id']}>" for recipe in recipes
+        )
+        await interaction.followup.send(
+            f"🎲 This round's picks:\n{recipe_lines}\n\n"
+            f"Combined into {len(combined_ingredients)} ingredient(s). "
+            "Which list should this go on?",
+            view=GroceryListView(combined_title, combined_ingredients, lists),
+            ephemeral=True,
         )
 
     @app_commands.command(
@@ -1225,60 +1270,11 @@ class Recipe(commands.Cog):
 
     @app_commands.command(
         name="shopping_list",
-        description="Add this recipe's ingredients to an OurGroceries list (run inside its thread)",
-    )
-    async def shopping_list(self, interaction: discord.Interaction):
-        channel = interaction.channel
-        if (
-            self.recipe_forum_id is None
-            or not isinstance(channel, discord.Thread)
-            or channel.parent_id != self.recipe_forum_id
-        ):
-            await interaction.response.send_message(
-                "❌ Use this command inside a recipe thread.",
-                ephemeral=True,
-            )
-            return
-
-        recipe = get_recipe_by_thread(channel.id)
-        if recipe is None:
-            await interaction.response.send_message(
-                "❌ This recipe isn't in the database yet.",
-                ephemeral=True,
-            )
-            return
-
-        await interaction.response.defer(ephemeral=True, thinking=True)
-
-        try:
-            lists = await get_grocery_lists()
-        except Exception as error:
-            await interaction.followup.send(
-                f"❌ I couldn't connect to OurGroceries: {error}",
-                ephemeral=True,
-            )
-            return
-
-        if not lists:
-            await interaction.followup.send(
-                "❌ No OurGroceries lists found on that account.",
-                ephemeral=True,
-            )
-            return
-
-        await interaction.followup.send(
-            "Which list should this go on?",
-            view=GroceryListView(recipe["title"], recipe["ingredients"], lists),
-            ephemeral=True,
-        )
-
-    @app_commands.command(
-        name="combine_recipes",
-        description="Combine ingredients from up to 5 recipes into one shopping list",
+        description="Put a recipe's ingredients on an OurGroceries list - or combine up to 5 recipes",
     )
     @app_commands.describe(
-        recipe_1="First recipe",
-        recipe_2="Optional: second recipe",
+        recipe_1="Optional: a recipe. Leave all five blank inside a recipe thread to use that recipe",
+        recipe_2="Optional: second recipe, to combine with the first",
         recipe_3="Optional: third recipe",
         recipe_4="Optional: fourth recipe",
         recipe_5="Optional: fifth recipe",
@@ -1290,10 +1286,10 @@ class Recipe(commands.Cog):
         recipe_4=recipe_title_autocomplete,
         recipe_5=recipe_title_autocomplete,
     )
-    async def combine_recipes(
+    async def shopping_list(
         self,
         interaction: discord.Interaction,
-        recipe_1: str,
+        recipe_1: str | None = None,
         recipe_2: str | None = None,
         recipe_3: str | None = None,
         recipe_4: str | None = None,
@@ -1304,26 +1300,56 @@ class Recipe(commands.Cog):
             if title and title not in requested_titles:
                 requested_titles.append(title)
 
-        recipes = []
-        missing_titles = []
-        for title in requested_titles:
-            recipe = get_recipe_by_title(title)
+        if requested_titles:
+            recipes = []
+            missing_titles = []
+            for title in requested_titles:
+                recipe = get_recipe_by_title(title)
+                if recipe is None:
+                    missing_titles.append(title)
+                else:
+                    recipes.append(recipe)
+
+            if missing_titles:
+                quoted = ", ".join(f'"{title}"' for title in missing_titles)
+                await interaction.response.send_message(
+                    f"❌ Couldn't find: {quoted} — pick a suggestion from the "
+                    "autocomplete list so the title matches exactly.",
+                    ephemeral=True,
+                )
+                return
+        else:
+            # No recipe named: use the one whose thread this was run in.
+            channel = interaction.channel
+            if (
+                self.recipe_forum_id is None
+                or not isinstance(channel, discord.Thread)
+                or channel.parent_id != self.recipe_forum_id
+            ):
+                await interaction.response.send_message(
+                    "❌ Run this inside a recipe thread, or pick a recipe (or up to 5) to put on the list.",
+                    ephemeral=True,
+                )
+                return
+            recipe = get_recipe_by_thread(channel.id)
             if recipe is None:
-                missing_titles.append(title)
-            else:
-                recipes.append(recipe)
+                await interaction.response.send_message(
+                    "❌ This recipe isn't in the database yet.",
+                    ephemeral=True,
+                )
+                return
+            recipes = [recipe]
 
-        if missing_titles:
-            quoted = ", ".join(f'"{title}"' for title in missing_titles)
-            await interaction.response.send_message(
-                f"❌ Couldn't find: {quoted} — pick a suggestion from the "
-                "autocomplete list so the title matches exactly.",
-                ephemeral=True,
+        if len(recipes) == 1:
+            list_title, list_ingredients = recipes[0]["title"], recipes[0]["ingredients"]
+            prompt = "Which list should this go on?"
+        else:
+            list_ingredients = combine_recipe_ingredients(recipes)
+            list_title = build_combined_recipe_title(recipes, limit=COMBINE_TITLE_DISPLAY_LIMIT)
+            prompt = (
+                f"🛒 Combined {len(recipes)} recipe(s) into {len(list_ingredients)} "
+                "ingredient(s). Which list should this go on?"
             )
-            return
-
-        combined_ingredients = combine_recipe_ingredients(recipes)
-        combined_title = build_combined_recipe_title(recipes, limit=COMBINE_TITLE_DISPLAY_LIMIT)
 
         await interaction.response.defer(ephemeral=True, thinking=True)
 
@@ -1344,67 +1370,8 @@ class Recipe(commands.Cog):
             return
 
         await interaction.followup.send(
-            f"🛒 Combined {len(recipes)} recipe(s) into {len(combined_ingredients)} "
-            "ingredient(s). Which list should this go on?",
-            view=GroceryListView(combined_title, combined_ingredients, lists),
-            ephemeral=True,
-        )
-
-    @app_commands.command(
-        name="meal_plan",
-        description="Suggest random recipes and combine their ingredients into one shopping list",
-    )
-    @app_commands.describe(
-        count="How many recipes to suggest (1-5, default 3)",
-        tag="Optional: only suggest recipes with this tag",
-    )
-    @app_commands.choices(tag=RECIPE_TAG_CHOICES)
-    async def meal_plan(
-        self,
-        interaction: discord.Interaction,
-        count: app_commands.Range[int, 1, 5] = 3,
-        tag: app_commands.Choice[str] | None = None,
-    ):
-        recipes = get_random_recipes(count, tag.value if tag else None)
-
-        if not recipes:
-            message = (
-                f"🎲 No recipes tagged {tag.name} yet!"
-                if tag
-                else "🎲 No recipes saved yet — import one with /recipe!"
-            )
-            await interaction.response.send_message(message, ephemeral=True)
-            return
-
-        combined_ingredients = combine_recipe_ingredients(recipes)
-        combined_title = build_combined_recipe_title(recipes, limit=COMBINE_TITLE_DISPLAY_LIMIT)
-
-        await interaction.response.defer(ephemeral=True, thinking=True)
-
-        try:
-            lists = await get_grocery_lists()
-        except Exception as error:
-            await interaction.followup.send(
-                f"❌ I couldn't connect to OurGroceries: {error}",
-                ephemeral=True,
-            )
-            return
-
-        if not lists:
-            await interaction.followup.send(
-                "❌ No OurGroceries lists found on that account.",
-                ephemeral=True,
-            )
-            return
-
-        recipe_lines = "\n".join(
-            f"• **{recipe['title']}** — <#{recipe['discord_thread_id']}>" for recipe in recipes
-        )
-        await interaction.followup.send(
-            f"🎲 This round's picks:\n{recipe_lines}\n\n"
-            f"Combined into {len(combined_ingredients)} ingredient(s). "
-            "Which list should this go on?",
-            view=GroceryListView(combined_title, combined_ingredients, lists),
+            prompt,
+            view=GroceryListView(list_title, list_ingredients, lists),
             ephemeral=True,
         )
 
@@ -1439,9 +1406,15 @@ class Recipe(commands.Cog):
 
     @app_commands.command(
         name="fix",
-        description="Correct this recipe's name, times, or servings (run inside its thread)",
+        description="Edit this recipe: name/times/servings, image, instructions or tags (run inside its thread)",
     )
-    async def fix(self, interaction: discord.Interaction):
+    @app_commands.describe(what="What to change (default: name, times and servings)")
+    @app_commands.choices(what=RECIPE_EDIT_CHOICES)
+    async def fix(
+        self,
+        interaction: discord.Interaction,
+        what: app_commands.Choice[str] | None = None,
+    ):
         channel = interaction.channel
         if (
             self.recipe_forum_id is None
@@ -1462,61 +1435,19 @@ class Recipe(commands.Cog):
             )
             return
 
-        await interaction.response.send_modal(FixRecipeModal(self, channel, current))
-
-    @app_commands.command(
-        name="fix_image",
-        description="Correct or add this recipe's image (run inside its thread)",
-    )
-    async def fix_image(self, interaction: discord.Interaction):
-        channel = interaction.channel
-        if (
-            self.recipe_forum_id is None
-            or not isinstance(channel, discord.Thread)
-            or channel.parent_id != self.recipe_forum_id
-        ):
+        kind = what.value if what else "details"
+        if kind == "image":
+            await interaction.response.send_modal(FixRecipeImageModal(self, channel, current))
+        elif kind == "instructions":
+            await interaction.response.send_modal(AddInstructionsModal(self, channel, current))
+        elif kind == "tags":
             await interaction.response.send_message(
-                "❌ Use this command inside a recipe thread.",
+                "Select every tag that applies:",
+                view=RecipeTagView(channel, current["human_status"], get_recipe_tags(channel.id)),
                 ephemeral=True,
             )
-            return
-
-        current = get_recipe_by_thread(channel.id)
-        if current is None:
-            await interaction.response.send_message(
-                "❌ This recipe isn't in the database yet.",
-                ephemeral=True,
-            )
-            return
-
-        await interaction.response.send_modal(FixRecipeImageModal(self, channel, current))
-
-    @app_commands.command(
-        name="add_instructions",
-        description="Append steps to this recipe's instructions (run inside its thread)",
-    )
-    async def add_instructions(self, interaction: discord.Interaction):
-        channel = interaction.channel
-        if (
-            self.recipe_forum_id is None
-            or not isinstance(channel, discord.Thread)
-            or channel.parent_id != self.recipe_forum_id
-        ):
-            await interaction.response.send_message(
-                "❌ Use this command inside a recipe thread.",
-                ephemeral=True,
-            )
-            return
-
-        current = get_recipe_by_thread(channel.id)
-        if current is None:
-            await interaction.response.send_message(
-                "❌ This recipe isn't in the database yet.",
-                ephemeral=True,
-            )
-            return
-
-        await interaction.response.send_modal(AddInstructionsModal(self, channel, current))
+        else:
+            await interaction.response.send_modal(FixRecipeModal(self, channel, current))
 
     @app_commands.command(
         name="check_setup",
@@ -1565,38 +1496,6 @@ class Recipe(commands.Cog):
             lines += [f"  • {name}" for name in result["missing"]]
 
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
-
-    @app_commands.command(
-        name="tags",
-        description="Manually choose which tags apply to this recipe (run inside its thread)",
-    )
-    async def tags(self, interaction: discord.Interaction):
-        channel = interaction.channel
-        if (
-            self.recipe_forum_id is None
-            or not isinstance(channel, discord.Thread)
-            or channel.parent_id != self.recipe_forum_id
-        ):
-            await interaction.response.send_message(
-                "❌ Use this command inside a recipe thread.",
-                ephemeral=True,
-            )
-            return
-
-        current = get_recipe_by_thread(channel.id)
-        if current is None:
-            await interaction.response.send_message(
-                "❌ This recipe isn't in the database yet.",
-                ephemeral=True,
-            )
-            return
-
-        current_tags = get_recipe_tags(channel.id)
-        await interaction.response.send_message(
-            "Select every tag that applies:",
-            view=RecipeTagView(channel, current["human_status"], current_tags),
-            ephemeral=True,
-        )
 
     @app_commands.command(
         name="help",

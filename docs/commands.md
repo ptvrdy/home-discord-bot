@@ -15,17 +15,17 @@ from `#general` or anywhere else.
 
 | Command | What it does |
 |---|---|
-| `/tags` **(run in its thread)** | Manually add or remove any of this recipe's tags via a checkbox menu. |
-| `/fix` **(run in its thread)** | Correct a recipe's name, prep/cook/total time, or servings — the fields most likely to come back wrong from a bad scrape. |
-| `/fix_image` **(run in its thread)** | Add or correct a recipe's image — separate from `/fix` since Discord modals cap out at 5 fields and that one's already full. Leave the URL blank to remove an image entirely. The picture is saved onto the card itself, so it won't break if the site moves it later. Page links and dead links are rejected with an explanation. |
-| `/add_instructions` **(run in its thread)** | Append steps to a recipe's instructions — useful when a scrape or manual entry missed the tail end. Posts a fresh instructions embed with the combined steps (the old one isn't tracked, so it can't be edited in place — delete it by hand if it's now redundant). |
+| `/fix [what]` **(run in its thread)** | Edit a recipe. The default is its name, prep/cook/total time and servings (the fields most likely to come back wrong from a bad scrape). Pick **Image**, **Add instructions** or **Tags** from the `what` choice for those instead. |
+| `/fix` → Image | Add or correct a recipe's image — separate from `/fix` since Discord modals cap out at 5 fields and that one's already full. Leave the URL blank to remove an image entirely. The picture is saved onto the card itself, so it won't break if the site moves it later. Page links and dead links are rejected with an explanation. |
+| `/fix` → Tags | Manually add or remove any of this recipe's tags via a checkbox menu. |
+| `/fix` → Add instructions | Append steps to a recipe's instructions — useful when a scrape or manual entry missed the tail end. Posts a fresh instructions embed with the combined steps (the old one isn't tracked, so it can't be edited in place — delete it by hand if it's now redundant). |
 
 ## 🔍 Find
 
 | Command | What it does |
 |---|---|
 | `/find_ingredient <query>` | Search recipes by title or ingredient. Each word in the query is matched independently, and tag-name words reuse the same include/exclude rules as auto-tagging. |
-| `/random [tag]` | Suggest a random recipe, optionally filtered to one tag. |
+| `/suggest_recipe [count] [tag]` | Suggest a random recipe (count 1, the default) with a link to its thread, optionally filtered to one tag. With a count of 2-5 it picks that many and combines their ingredients into one shopping list, same as `/shopping_list` with several recipes, but picked for you. |
 | `/needs_review` | List every recipe still marked 📝 Needs Review, oldest first. |
 
 ## ⭐ Review & Stats
@@ -39,9 +39,7 @@ from `#general` or anywhere else.
 
 | Command | What it does |
 |---|---|
-| `/shopping_list` **(run in its thread)** | Add a recipe's ingredients to an OurGroceries list. Pick which list, then uncheck anything you already have (pre-unchecked if it's already on *any* list, or a common pantry staple). An Undo button appears after adding. |
-| `/combine_recipes` | Pick up to 5 recipes (autocomplete search by title) and combine their ingredients into one deduplicated shopping list, then add to whichever OurGroceries list you choose. |
-| `/meal_plan` | Suggest 1-5 random recipes (optionally filtered by tag) and combine their ingredients into one shopping list, same as `/combine_recipes` but picked for you. |
+| `/shopping_list [recipe_1..recipe_5]` | Put a recipe's ingredients on an OurGroceries list. Run it in a recipe's thread with nothing filled in to use that recipe, or name up to 5 recipes (autocomplete by title) to combine them into one deduplicated list. Pick which list, then uncheck anything you already have (pre-unchecked if it's already on *any* list, or a common pantry staple). An Undo button appears after adding. |
 | `/grocery_list` | View what's currently on one of your OurGroceries lists, without leaving Discord. |
 
 ## 🧹 Household Chores
@@ -65,8 +63,8 @@ from `#general` or anywhere else.
 
 | Command | What it does |
 |---|---|
-| `/plan_meal <meal> <recipe>` | Add a recipe to this week's Breakfast/Lunch/Dinner list — deliberately *not* tied to a specific day, since dinner plans shift (takeout, forgot to defrost, ran out of an ingredient). Autocomplete suggests your saved recipes, but you can type anything. Shows up in the "🍽️ This Week's Food" section of #this-week, and auto-clears every Monday. |
-| `/clear_meal_plan` | Clear this week's food list and start over. |
+| `/meal_plan <meal> <recipe>` | Add a recipe to this week's Breakfast/Lunch/Dinner list — deliberately *not* tied to a specific day, since dinner plans shift (takeout, forgot to defrost, ran out of an ingredient). Autocomplete suggests your saved recipes, but you can type anything. Shows up in the "🍽️ This Week's Food" section of #this-week, and auto-clears every Monday. |
+| `/meal_plan_clear` | Clear this week's food list and start over. |
 
 ## 🥫 Pantry
 
@@ -87,7 +85,7 @@ and how long they keep.
 | `/sync_tj_catalog` | Refresh Rosie's copy of the Trader Joe's catalog now. Runs automatically on the 1st of each month and posts a summary (with "back at TJ's" for seasonal items you've bought before) in #nudges. |
 
 Also automatic: `/review` → Made offers to use up the recipe's in-stock ingredients;
-`/shopping_list`, `/combine_recipes`, and `/meal_plan` start in-stock ingredients unchecked
+`/shopping_list` and `/suggest_recipe` (2+) start in-stock ingredients unchecked
 "(in pantry)"; #this-week gets a "⏰ Use Soon" section; #nudges gets a 9am "use it or freeze
 it" reminder for meat (and produce, if enabled in `config/shelf_life.py`) and a Monday check
 of FDA recalls against what's in stock. If something scanned in Grocy looks like the same
@@ -124,7 +122,7 @@ real @-mention that pings them; otherwise it just prints their name.
 | Command | What it does |
 |---|---|
 | `/check_setup` | Compares every configured tag against what's actually on the recipe forum channel and reports mismatches or missing tags. |
-| `/check_recipes` | Compares every post in the recipe forum (archived ones too) with the database. Lists posts the database is missing (invisible to search, `/random`, `/review`, `/what_can_i_make`) and database recipes whose post was deleted. **Re-import** saves the missing ones: re-scraped from the original link when it still works (keeping any `/fix` rename and the post's status), otherwise rebuilt from the post's card and instructions. It also finds recipes whose review journal message was deleted from the post (the reviews stay saved) and **Rebuild** reposts it from them. **Forget** removes database recipes whose post was deleted (with their tags and reviews) - it backs the database up first and re-checks each post is really gone. |
+| `/check_recipes` | Compares every post in the recipe forum (archived ones too) with the database. Lists posts the database is missing (invisible to search, `/suggest_recipe`, `/review`, `/what_can_i_make`) and database recipes whose post was deleted. **Re-import** saves the missing ones: re-scraped from the original link when it still works (keeping any `/fix` rename and the post's status), otherwise rebuilt from the post's card and instructions. It also finds recipes whose review journal message was deleted from the post (the reviews stay saved) and **Rebuild** reposts it from them. **Forget** removes database recipes whose post was deleted (with their tags and reviews) - it backs the database up first and re-checks each post is really gone. |
 | `/fix_sources` | Labels recipes by where they came from: a saved YouTube (or TikTok) link with no site name now says **From YouTube**, and a link that was stuck in the name slot is moved to the link. Refreshes each recipe's card (reopening and re-archiving an archived post). Never overwrites a name someone chose ("Hand-entered", "Handwritten from Sarah"). Up to 25 per run; safe to re-run. Ends with a list of sites Rosie has no name for yet. |
 | `/check_calendar_setup` | Verifies the Google service account can reach each configured calendar (i.e. it's actually been shared), and reports the calendar name or the error for each. |
 | `/backup_now` | Manually back up the database right now instead of waiting for the automatic daily 3am backup. Keeps the most recent 14 backups in `data/backups/`, pruning older ones. |

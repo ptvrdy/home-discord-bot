@@ -22,7 +22,7 @@ class MealPlan(commands.Cog):
         self.bot = bot
 
     @app_commands.command(
-        name="plan_meal",
+        name="meal_plan",
         description="Add a recipe to this week's breakfast/lunch/dinner list (not tied to a day)",
     )
     @app_commands.describe(
@@ -31,7 +31,7 @@ class MealPlan(commands.Cog):
     )
     @app_commands.choices(meal=MEAL_CHOICES)
     @app_commands.autocomplete(recipe=recipe_title_autocomplete)
-    async def plan_meal(
+    async def meal_plan(
         self,
         interaction: discord.Interaction,
         meal: app_commands.Choice[str],
@@ -46,10 +46,10 @@ class MealPlan(commands.Cog):
         await refresh_this_week(self.bot)
 
     @app_commands.command(
-        name="clear_meal_plan",
+        name="meal_plan_clear",
         description="Clear this week's breakfast/lunch/dinner list",
     )
-    async def clear_meal_plan_command(self, interaction: discord.Interaction):
+    async def meal_plan_clear(self, interaction: discord.Interaction):
         now = datetime.now(HOUSEHOLD_TZ)
         week_start = get_week_start(now.date())
 
